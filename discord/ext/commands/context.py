@@ -48,9 +48,8 @@ if TYPE_CHECKING:
     from discord.mentions import AllowedMentions
     from discord.sticker import GuildSticker, StickerItem
     from discord.message import MessageReference, PartialMessage
-    from discord.ui.view import BaseView, View, LayoutView
+    from discord.ui import View
     from discord.types.interactions import ApplicationCommandInteractionData
-    from discord.poll import Poll
 
     from .cog import Cog
     from .core import Command
@@ -82,20 +81,16 @@ def is_cog(obj: Any) -> TypeGuard[Cog]:
     return hasattr(obj, '__cog_commands__')
 
 
-class DeferTyping(Generic[BotT]):
+class DeferTyping:
     def __init__(self, ctx: Context[BotT], *, ephemeral: bool):
         self.ctx: Context[BotT] = ctx
         self.ephemeral: bool = ephemeral
 
-    async def do_defer(self) -> None:
-        if self.ctx.interaction and not self.ctx.interaction.response.is_done():
-            await self.ctx.interaction.response.defer(ephemeral=self.ephemeral)
-
     def __await__(self) -> Generator[Any, None, None]:
-        return self.do_defer().__await__()
+        return self.ctx.defer(ephemeral=self.ephemeral).__await__()
 
     async def __aenter__(self) -> None:
-        await self.do_defer()
+        await self.ctx.defer(ephemeral=self.ephemeral)
 
     async def __aexit__(
         self,
@@ -477,7 +472,7 @@ class Context(discord.abc.Messageable, Generic[BotT]):
 
         .. versionadded:: 2.0
         """
-        if self.interaction is None and self.channel.type is ChannelType.private:
+        if self.channel.type is ChannelType.private:
             return Permissions._dm_permissions()
         if not self.interaction:
             # channel and author will always match relevant types here
@@ -511,7 +506,7 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         .. versionadded:: 2.0
         """
         channel = self.channel
-        if self.interaction is None and channel.type == ChannelType.private:
+        if channel.type == ChannelType.private:
             return Permissions._dm_permissions()
         if not self.interaction:
             # channel and me will always match relevant types here
@@ -631,40 +626,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
     @overload
     async def reply(
         self,
-        *,
-        file: File = ...,
-        delete_after: float = ...,
-        nonce: Union[str, int] = ...,
-        allowed_mentions: AllowedMentions = ...,
-        reference: Union[Message, MessageReference, PartialMessage] = ...,
-        mention_author: bool = ...,
-        view: LayoutView,
-        suppress_embeds: bool = ...,
-        ephemeral: bool = ...,
-        silent: bool = ...,
-    ) -> Message:
-        ...
-
-    @overload
-    async def reply(
-        self,
-        *,
-        files: Sequence[File] = ...,
-        delete_after: float = ...,
-        nonce: Union[str, int] = ...,
-        allowed_mentions: AllowedMentions = ...,
-        reference: Union[Message, MessageReference, PartialMessage] = ...,
-        mention_author: bool = ...,
-        view: LayoutView,
-        suppress_embeds: bool = ...,
-        ephemeral: bool = ...,
-        silent: bool = ...,
-    ) -> Message:
-        ...
-
-    @overload
-    async def reply(
-        self,
         content: Optional[str] = ...,
         *,
         tts: bool = ...,
@@ -680,7 +641,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         suppress_embeds: bool = ...,
         ephemeral: bool = ...,
         silent: bool = ...,
-        poll: Poll = ...,
     ) -> Message:
         ...
 
@@ -702,7 +662,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         suppress_embeds: bool = ...,
         ephemeral: bool = ...,
         silent: bool = ...,
-        poll: Poll = ...,
     ) -> Message:
         ...
 
@@ -724,7 +683,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         suppress_embeds: bool = ...,
         ephemeral: bool = ...,
         silent: bool = ...,
-        poll: Poll = ...,
     ) -> Message:
         ...
 
@@ -746,7 +704,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         suppress_embeds: bool = ...,
         ephemeral: bool = ...,
         silent: bool = ...,
-        poll: Poll = ...,
     ) -> Message:
         ...
 
@@ -785,7 +742,7 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         else:
             return await self.send(content, **kwargs)
 
-    def typing(self, *, ephemeral: bool = False) -> Union[Typing, DeferTyping[BotT]]:
+    def typing(self, *, ephemeral: bool = False) -> Union[Typing, DeferTyping]:
         """Returns an asynchronous context manager that allows you to send a typing indicator to
         the destination for an indefinite period of time, or 10 seconds if the context manager
         is called using ``await``.
@@ -854,40 +811,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
     @overload
     async def send(
         self,
-        *,
-        file: File = ...,
-        delete_after: float = ...,
-        nonce: Union[str, int] = ...,
-        allowed_mentions: AllowedMentions = ...,
-        reference: Union[Message, MessageReference, PartialMessage] = ...,
-        mention_author: bool = ...,
-        view: LayoutView,
-        suppress_embeds: bool = ...,
-        ephemeral: bool = ...,
-        silent: bool = ...,
-    ) -> Message:
-        ...
-
-    @overload
-    async def send(
-        self,
-        *,
-        files: Sequence[File] = ...,
-        delete_after: float = ...,
-        nonce: Union[str, int] = ...,
-        allowed_mentions: AllowedMentions = ...,
-        reference: Union[Message, MessageReference, PartialMessage] = ...,
-        mention_author: bool = ...,
-        view: LayoutView,
-        suppress_embeds: bool = ...,
-        ephemeral: bool = ...,
-        silent: bool = ...,
-    ) -> Message:
-        ...
-
-    @overload
-    async def send(
-        self,
         content: Optional[str] = ...,
         *,
         tts: bool = ...,
@@ -903,7 +826,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         suppress_embeds: bool = ...,
         ephemeral: bool = ...,
         silent: bool = ...,
-        poll: Poll = ...,
     ) -> Message:
         ...
 
@@ -925,7 +847,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         suppress_embeds: bool = ...,
         ephemeral: bool = ...,
         silent: bool = ...,
-        poll: Poll = ...,
     ) -> Message:
         ...
 
@@ -947,7 +868,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         suppress_embeds: bool = ...,
         ephemeral: bool = ...,
         silent: bool = ...,
-        poll: Poll = ...,
     ) -> Message:
         ...
 
@@ -969,7 +889,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         suppress_embeds: bool = ...,
         ephemeral: bool = ...,
         silent: bool = ...,
-        poll: Poll = ...,
     ) -> Message:
         ...
 
@@ -988,11 +907,10 @@ class Context(discord.abc.Messageable, Generic[BotT]):
         allowed_mentions: Optional[AllowedMentions] = None,
         reference: Optional[Union[Message, MessageReference, PartialMessage]] = None,
         mention_author: Optional[bool] = None,
-        view: Optional[BaseView] = None,
+        view: Optional[View] = None,
         suppress_embeds: bool = False,
         ephemeral: bool = False,
         silent: bool = False,
-        poll: Poll = MISSING,
     ) -> Message:
         """|coro|
 
@@ -1054,12 +972,10 @@ class Context(discord.abc.Messageable, Generic[BotT]):
             This is ignored for interaction based contexts.
 
             .. versionadded:: 1.6
-        view: Union[:class:`discord.ui.View`, :class:`discord.ui.LayoutView`]
+        view: :class:`discord.ui.View`
             A Discord UI View to add to the message.
 
             .. versionadded:: 2.0
-            .. versionchanged:: 2.6
-                This now accepts :class:`discord.ui.LayoutView` instances.
         embeds: List[:class:`~discord.Embed`]
             A list of embeds to upload. Must be a maximum of 10.
 
@@ -1083,11 +999,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
             in the UI, but will not actually send a notification.
 
             .. versionadded:: 2.2
-
-        poll: :class:`~discord.Poll`
-            The poll to send with this message.
-
-            .. versionadded:: 2.4
 
         Raises
         --------
@@ -1126,7 +1037,6 @@ class Context(discord.abc.Messageable, Generic[BotT]):
                 view=view,
                 suppress_embeds=suppress_embeds,
                 silent=silent,
-                poll=poll,
             )  # type: ignore # The overloads don't support Optional but the implementation does
 
         # Convert the kwargs from None to MISSING to appease the remaining implementations
@@ -1142,17 +1052,13 @@ class Context(discord.abc.Messageable, Generic[BotT]):
             'suppress_embeds': suppress_embeds,
             'ephemeral': ephemeral,
             'silent': silent,
-            'poll': poll,
         }
 
         if self.interaction.response.is_done():
             msg = await self.interaction.followup.send(**kwargs, wait=True)
         else:
-            response = await self.interaction.response.send_message(**kwargs)
-            if not isinstance(response.resource, discord.InteractionMessage):
-                msg = await self.interaction.original_response()
-            else:
-                msg = response.resource
+            await self.interaction.response.send_message(**kwargs)
+            msg = await self.interaction.original_response()
 
         if delete_after is not None:
             await msg.delete(delay=delete_after)

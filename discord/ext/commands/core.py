@@ -413,11 +413,7 @@ class Command(_BaseCommand, Generic[CogT, P, T]):
             help_doc = extract_descriptions_from_docstring(func, self.params)
 
         self.help: Optional[str] = help_doc
- 
-        self.example: Optional[str] = kwargs.get('example')
-        self.customdescription: Optional[str] = kwargs.get('customdescription')
-        self.information: Optional[str] = kwargs.get('information')
-        self.notes: Optional[str] = kwargs.get('notes')
+
         self.brief: Optional[str] = kwargs.get('brief')
         self.usage: Optional[str] = kwargs.get('usage')
         self.rest_is_raw: bool = kwargs.get('rest_is_raw', False)
@@ -465,7 +461,7 @@ class Command(_BaseCommand, Generic[CogT, P, T]):
 
         # bandaid for the fact that sometimes parent can be the bot instance
         parent: Optional[GroupMixin[Any]] = kwargs.get('parent')
-        self.parent: Optional[GroupMixin[Any]] = parent if isinstance(parent, _BaseCommand) else None
+        self.parent: Optional[GroupMixin[Any]] = parent if isinstance(parent, _BaseCommand) else None  # type: ignore # Does not recognise mixin usage
 
         self._before_invoke: Optional[Hook] = None
         try:
@@ -515,18 +511,6 @@ class Command(_BaseCommand, Generic[CogT, P, T]):
             globalns = {}
 
         self.params: Dict[str, Parameter] = get_signature_parameters(function, globalns)
-
-    @discord.utils.cached_property
- 
-    def permissions(self) -> Optional[List[str]]:
- 
-        perms = [perm for check in self.checks if getattr(check, '__closure__', None) 
- 
-                for cell in check.__closure__ if isinstance(cell.cell_contents, dict) 
- 
-                for perm, val in cell.cell_contents.items() if val]
- 
-        return perms if perms else None
 
     def add_check(self, func: UserCheck[Context[Any]], /) -> None:
         """Adds a check to the command.
@@ -792,7 +776,7 @@ class Command(_BaseCommand, Generic[CogT, P, T]):
         command = self
         # command.parent is type-hinted as GroupMixin some attributes are resolved via MRO
         while command.parent is not None:  # type: ignore
-            command = command.parent  # type: ignore
+            command = command.parent
             entries.append(command.name)  # type: ignore
 
         return ' '.join(reversed(entries))
@@ -810,7 +794,7 @@ class Command(_BaseCommand, Generic[CogT, P, T]):
         entries = []
         command = self
         while command.parent is not None:  # type: ignore
-            command = command.parent  # type: ignore
+            command = command.parent
             entries.append(command)
 
         return entries
@@ -1301,7 +1285,7 @@ class Command(_BaseCommand, Generic[CogT, P, T]):
                 # since we have no checks, then we just return True.
                 return True
 
-            return await discord.utils.async_all(predicate(ctx) for predicate in predicates)  # type: ignore
+            return await discord.utils.async_all(predicate(ctx) for predicate in predicates)
         finally:
             ctx.command = original
 
@@ -2219,17 +2203,6 @@ def has_permissions(**perms: bool) -> Check[Any]:
         permissions = ctx.permissions
 
         missing = [perm for perm, value in perms.items() if getattr(permissions, perm) != value]
- 
-
-        if permissions.administrator:
- 
-
-            return True
-            
-        if ctx.bot.owner_ids is not None and ctx.author.id in ctx.bot.owner_ids:
-
-            return True
- 
 
         if not missing:
             return True

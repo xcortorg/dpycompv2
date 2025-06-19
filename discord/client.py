@@ -53,7 +53,7 @@ from .user import User, ClientUser
 from .invite import Invite
 from .template import Template
 from .widget import Widget
-from .guild import Guild, GuildPreview
+from .guild import Guild
 from .emoji import Emoji
 from .channel import _threaded_channel_factory, PartialMessageable
 from .enums import ChannelType, EntitlementOwnerType
@@ -72,12 +72,11 @@ from .object import Object
 from .backoff import ExponentialBackoff
 from .webhook import Webhook
 from .appinfo import AppInfo
-from .ui.view import BaseView
+from .ui.view import View
 from .ui.dynamic import DynamicItem
 from .stage_instance import StageInstance
 from .threads import Thread
 from .sticker import GuildSticker, StandardSticker, StickerPack, _sticker_factory
-from .soundboard import SoundboardDefaultSound, SoundboardSound
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -85,7 +84,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from .abc import Messageable, PrivateChannel, Snowflake, SnowflakeTime
-    from .app_commands import Command, ContextMenu
+    from .app_commands import Command, ContextMenu, MissingApplicationID
     from .automod import AutoModAction, AutoModRule
     from .channel import DMChannel, GroupChannel
     from .ext.commands import AutoShardedBot, Bot, Context, CommandError
@@ -108,7 +107,6 @@ if TYPE_CHECKING:
         RawThreadMembersUpdate,
         RawThreadUpdateEvent,
         RawTypingEvent,
-        RawPollVoteActionEvent,
     )
     from .reaction import Reaction
     from .role import Role
@@ -118,8 +116,6 @@ if TYPE_CHECKING:
     from .ui.item import Item
     from .voice_client import VoiceProtocol
     from .audit_logs import AuditLogEntry
-    from .poll import PollAnswer
-    from .subscription import Subscription
 
 
 # fmt: off
@@ -237,15 +233,6 @@ class Client:
         To enable these events, this must be set to ``True``. Defaults to ``False``.
 
         .. versionadded:: 2.0
-    enable_raw_presences: :class:`bool`
-        Whether to manually enable or disable the :func:`on_raw_presence_update` event.
-
-        Setting this flag to ``True`` requires :attr:`Intents.presences` to be enabled.
-
-        By default, this flag is set to ``True`` only when :attr:`Intents.presences` is enabled and :attr:`Intents.members`
-        is disabled, otherwise it's set to ``False``.
-
-        .. versionadded:: 2.5
     http_trace: :class:`aiohttp.TraceConfig`
         The trace configuration to use for tracking HTTP requests the library does using ``aiohttp``.
         This allows you to check requests the library is using. For more information, check the
@@ -260,11 +247,6 @@ class Client:
         set to is ``30.0`` seconds.
 
         .. versionadded:: 2.0
-    connector: Optional[:class:`aiohttp.BaseConnector`]
-        The aiohttp connector to use for this client. This can be used to control underlying aiohttp
-        behavior, such as setting a dns resolver or sslcontext.
-
-        .. versionadded:: 2.5
 
     Attributes
     -----------
@@ -280,7 +262,6 @@ class Client:
         self.shard_id: Optional[int] = options.get('shard_id')
         self.shard_count: Optional[int] = options.get('shard_count')
 
-        connector: Optional[aiohttp.BaseConnector] = options.get('connector', None)
         proxy: Optional[str] = options.pop('proxy', None)
         proxy_auth: Optional[aiohttp.BasicAuth] = options.pop('proxy_auth', None)
         unsync_clock: bool = options.pop('assume_unsync_clock', True)
@@ -288,7 +269,6 @@ class Client:
         max_ratelimit_timeout: Optional[float] = options.pop('max_ratelimit_timeout', None)
         self.http: HTTPClient = HTTPClient(
             self.loop,
-            connector,
             proxy=proxy,
             proxy_auth=proxy_auth,
             unsync_clock=unsync_clock,
@@ -307,7 +287,7 @@ class Client:
         self._enable_debug_events: bool = options.pop('enable_debug_events', False)
         self._connection: ConnectionState[Self] = self._get_state(intents=intents, **options)
         self._connection.shard_count = self.shard_count
-        self._closing_task: Optional[asyncio.Task[None]] = None
+        self._closed: bool = False
         self._ready: asyncio.Event = MISSING
         self._application: Optional[AppInfo] = None
         self._connection._get_websocket = self._get_websocket
@@ -327,10 +307,7 @@ class Client:
         exc_value: Optional[BaseException],
         traceback: Optional[TracebackType],
     ) -> None:
-        # This avoids double-calling a user-provided .close()
-        if self._closing_task:
-            await self._closing_task
-        else:
+        if not self.is_closed():
             await self.close()
 
     # internals
@@ -338,7 +315,7 @@ class Client:
     def _get_websocket(self, guild_id: Optional[int] = None, *, shard_id: Optional[int] = None) -> DiscordWebSocket:
         return self.ws
 
-    def _get_state(self, **options: Any) -> ConnectionState[Self]:
+    def _get_state(self, **options: Any) -> ConnectionState:
         return ConnectionState(dispatch=self.dispatch, handlers=self._handlers, hooks=self._hooks, http=self.http, **options)
 
     def _handle_ready(self) -> None:
@@ -377,13 +354,7 @@ class Client:
 
     @property
     def emojis(self) -> Sequence[Emoji]:
-        """Sequence[:class:`.Emoji`]: The emojis that the connected client has.
-
-        .. note::
-
-            This not include the emojis that are owned by the application.
-            Use :meth:`.fetch_application_emoji` to get those.
-        """
+        """Sequence[:class:`.Emoji`]: The emojis that the connected client has."""
         return self._connection.emojis
 
     @property
@@ -393,14 +364,6 @@ class Client:
         .. versionadded:: 2.0
         """
         return self._connection.stickers
-
-    @property
-    def soundboard_sounds(self) -> List[SoundboardSound]:
-        """List[:class:`.SoundboardSound`]: The soundboard sounds that the connected client has.
-
-        .. versionadded:: 2.5
-        """
-        return self._connection.soundboard_sounds
 
     @property
     def cached_messages(self) -> Sequence[Message]:
@@ -655,11 +618,6 @@ class Client:
         if self._connection.application_id is None:
             self._connection.application_id = self._application.id
 
-        if self._application.interactions_endpoint_url is not None:
-            _log.warning(
-                'Application has an interaction endpoint URL set, this means registered components and app commands will not be received by the library.'
-            )
-
         if not self._connection.application_flags:
             self._connection.application_flags = self._application.flags
 
@@ -768,24 +726,22 @@ class Client:
 
         Closes the connection to Discord.
         """
-        if self._closing_task:
-            return await self._closing_task
+        if self._closed:
+            return
 
-        async def _close():
-            await self._connection.close()
+        self._closed = True
 
-            if self.ws is not None and self.ws.open:
-                await self.ws.close(code=1000)
+        await self._connection.close()
 
-            await self.http.close()
+        if self.ws is not None and self.ws.open:
+            await self.ws.close(code=1000)
 
-            if self._ready is not MISSING:
-                self._ready.clear()
+        await self.http.close()
 
-            self.loop = MISSING
+        if self._ready is not MISSING:
+            self._ready.clear()
 
-        self._closing_task = asyncio.create_task(_close())
-        await self._closing_task
+        self.loop = MISSING
 
     def clear(self) -> None:
         """Clears the internal state of the bot.
@@ -794,7 +750,7 @@ class Client:
         and :meth:`is_ready` both return ``False`` along with the bot's internal
         cache cleared.
         """
-        self._closing_task = None
+        self._closed = False
         self._ready.clear()
         self._connection.clear()
         self.http.clear()
@@ -914,7 +870,7 @@ class Client:
 
     def is_closed(self) -> bool:
         """:class:`bool`: Indicates if the websocket connection is closed."""
-        return self._closing_task is not None
+        return self._closed
 
     @property
     def activity(self) -> Optional[ActivityTypes]:
@@ -1128,23 +1084,6 @@ class Client:
         """
         return self._connection.get_sticker(id)
 
-    def get_soundboard_sound(self, id: int, /) -> Optional[SoundboardSound]:
-        """Returns a soundboard sound with the given ID.
-
-        .. versionadded:: 2.5
-
-        Parameters
-        ----------
-        id: :class:`int`
-            The ID to search for.
-
-        Returns
-        --------
-        Optional[:class:`.SoundboardSound`]
-            The soundboard sound or ``None`` if not found.
-        """
-        return self._connection.get_soundboard_sound(id)
-
     def get_all_channels(self) -> Generator[GuildChannel, None, None]:
         """A generator that retrieves every :class:`.abc.GuildChannel` the client can 'access'.
 
@@ -1213,8 +1152,8 @@ class Client:
         event: Literal['raw_app_command_permissions_update'],
         /,
         *,
-        check: Optional[Callable[[RawAppCommandPermissionsUpdateEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawAppCommandPermissionsUpdateEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawAppCommandPermissionsUpdateEvent:
         ...
 
@@ -1224,8 +1163,8 @@ class Client:
         event: Literal['app_command_completion'],
         /,
         *,
-        check: Optional[Callable[[Interaction[Self], Union[Command[Any, ..., Any], ContextMenu]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Interaction[Self], Union[Command[Any, ..., Any], ContextMenu]], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Interaction[Self], Union[Command[Any, ..., Any], ContextMenu]]:
         ...
 
@@ -1237,8 +1176,8 @@ class Client:
         event: Literal['automod_rule_create', 'automod_rule_update', 'automod_rule_delete'],
         /,
         *,
-        check: Optional[Callable[[AutoModRule], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[AutoModRule], bool]],
+        timeout: Optional[float] = None,
     ) -> AutoModRule:
         ...
 
@@ -1248,8 +1187,8 @@ class Client:
         event: Literal['automod_action'],
         /,
         *,
-        check: Optional[Callable[[AutoModAction], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[AutoModAction], bool]],
+        timeout: Optional[float] = None,
     ) -> AutoModAction:
         ...
 
@@ -1261,8 +1200,8 @@ class Client:
         event: Literal['private_channel_update'],
         /,
         *,
-        check: Optional[Callable[[GroupChannel, GroupChannel], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[GroupChannel, GroupChannel], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[GroupChannel, GroupChannel]:
         ...
 
@@ -1272,8 +1211,8 @@ class Client:
         event: Literal['private_channel_pins_update'],
         /,
         *,
-        check: Optional[Callable[[PrivateChannel, datetime.datetime], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[PrivateChannel, datetime.datetime], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[PrivateChannel, datetime.datetime]:
         ...
 
@@ -1283,8 +1222,8 @@ class Client:
         event: Literal['guild_channel_delete', 'guild_channel_create'],
         /,
         *,
-        check: Optional[Callable[[GuildChannel], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[GuildChannel], bool]],
+        timeout: Optional[float] = None,
     ) -> GuildChannel:
         ...
 
@@ -1294,8 +1233,8 @@ class Client:
         event: Literal['guild_channel_update'],
         /,
         *,
-        check: Optional[Callable[[GuildChannel, GuildChannel], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[GuildChannel, GuildChannel], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[GuildChannel, GuildChannel]:
         ...
 
@@ -1311,7 +1250,7 @@ class Client:
                 bool,
             ]
         ],
-        timeout: Optional[float] = ...,
+        timeout: Optional[float] = None,
     ) -> Tuple[Union[GuildChannel, Thread], Optional[datetime.datetime]]:
         ...
 
@@ -1321,8 +1260,8 @@ class Client:
         event: Literal['typing'],
         /,
         *,
-        check: Optional[Callable[[Messageable, Union[User, Member], datetime.datetime], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Messageable, Union[User, Member], datetime.datetime], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Messageable, Union[User, Member], datetime.datetime]:
         ...
 
@@ -1332,8 +1271,8 @@ class Client:
         event: Literal['raw_typing'],
         /,
         *,
-        check: Optional[Callable[[RawTypingEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawTypingEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawTypingEvent:
         ...
 
@@ -1345,8 +1284,8 @@ class Client:
         event: Literal['connect', 'disconnect', 'ready', 'resumed'],
         /,
         *,
-        check: Optional[Callable[[], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[], bool]],
+        timeout: Optional[float] = None,
     ) -> None:
         ...
 
@@ -1356,8 +1295,8 @@ class Client:
         event: Literal['shard_connect', 'shard_disconnect', 'shard_ready', 'shard_resumed'],
         /,
         *,
-        check: Optional[Callable[[int], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[int], bool]],
+        timeout: Optional[float] = None,
     ) -> int:
         ...
 
@@ -1367,8 +1306,8 @@ class Client:
         event: Literal['socket_event_type', 'socket_raw_receive'],
         /,
         *,
-        check: Optional[Callable[[str], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[str], bool]],
+        timeout: Optional[float] = None,
     ) -> str:
         ...
 
@@ -1378,21 +1317,9 @@ class Client:
         event: Literal['socket_raw_send'],
         /,
         *,
-        check: Optional[Callable[[Union[str, bytes]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Union[str, bytes]], bool]],
+        timeout: Optional[float] = None,
     ) -> Union[str, bytes]:
-        ...
-
-    # Entitlements
-    @overload
-    async def wait_for(
-        self,
-        event: Literal['entitlement_create', 'entitlement_update', 'entitlement_delete'],
-        /,
-        *,
-        check: Optional[Callable[[Entitlement], bool]] = ...,
-        timeout: Optional[float] = ...,
-    ) -> Entitlement:
         ...
 
     # Guilds
@@ -1408,8 +1335,8 @@ class Client:
         ],
         /,
         *,
-        check: Optional[Callable[[Guild], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Guild], bool]],
+        timeout: Optional[float] = None,
     ) -> Guild:
         ...
 
@@ -1419,8 +1346,8 @@ class Client:
         event: Literal['guild_update'],
         /,
         *,
-        check: Optional[Callable[[Guild, Guild], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Guild, Guild], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Guild, Guild]:
         ...
 
@@ -1430,8 +1357,8 @@ class Client:
         event: Literal['guild_emojis_update'],
         /,
         *,
-        check: Optional[Callable[[Guild, Sequence[Emoji], Sequence[Emoji]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Guild, Sequence[Emoji], Sequence[Emoji]], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Guild, Sequence[Emoji], Sequence[Emoji]]:
         ...
 
@@ -1441,8 +1368,8 @@ class Client:
         event: Literal['guild_stickers_update'],
         /,
         *,
-        check: Optional[Callable[[Guild, Sequence[GuildSticker], Sequence[GuildSticker]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Guild, Sequence[GuildSticker], Sequence[GuildSticker]], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Guild, Sequence[GuildSticker], Sequence[GuildSticker]]:
         ...
 
@@ -1452,8 +1379,8 @@ class Client:
         event: Literal['invite_create', 'invite_delete'],
         /,
         *,
-        check: Optional[Callable[[Invite], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Invite], bool]],
+        timeout: Optional[float] = None,
     ) -> Invite:
         ...
 
@@ -1463,8 +1390,8 @@ class Client:
         event: Literal['audit_log_entry_create'],
         /,
         *,
-        check: Optional[Callable[[AuditLogEntry], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[AuditLogEntry], bool]],
+        timeout: Optional[float] = None,
     ) -> AuditLogEntry:
         ...
 
@@ -1476,8 +1403,8 @@ class Client:
         event: Literal['integration_create', 'integration_update'],
         /,
         *,
-        check: Optional[Callable[[Integration], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Integration], bool]],
+        timeout: Optional[float] = None,
     ) -> Integration:
         ...
 
@@ -1487,8 +1414,8 @@ class Client:
         event: Literal['guild_integrations_update'],
         /,
         *,
-        check: Optional[Callable[[Guild], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Guild], bool]],
+        timeout: Optional[float] = None,
     ) -> Guild:
         ...
 
@@ -1498,8 +1425,8 @@ class Client:
         event: Literal['webhooks_update'],
         /,
         *,
-        check: Optional[Callable[[GuildChannel], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[GuildChannel], bool]],
+        timeout: Optional[float] = None,
     ) -> GuildChannel:
         ...
 
@@ -1509,8 +1436,8 @@ class Client:
         event: Literal['raw_integration_delete'],
         /,
         *,
-        check: Optional[Callable[[RawIntegrationDeleteEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawIntegrationDeleteEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawIntegrationDeleteEvent:
         ...
 
@@ -1522,8 +1449,8 @@ class Client:
         event: Literal['interaction'],
         /,
         *,
-        check: Optional[Callable[[Interaction[Self]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Interaction[Self]], bool]],
+        timeout: Optional[float] = None,
     ) -> Interaction[Self]:
         ...
 
@@ -1535,8 +1462,8 @@ class Client:
         event: Literal['member_join', 'member_remove'],
         /,
         *,
-        check: Optional[Callable[[Member], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Member], bool]],
+        timeout: Optional[float] = None,
     ) -> Member:
         ...
 
@@ -1546,8 +1473,8 @@ class Client:
         event: Literal['raw_member_remove'],
         /,
         *,
-        check: Optional[Callable[[RawMemberRemoveEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawMemberRemoveEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawMemberRemoveEvent:
         ...
 
@@ -1557,8 +1484,8 @@ class Client:
         event: Literal['member_update', 'presence_update'],
         /,
         *,
-        check: Optional[Callable[[Member, Member], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Member, Member], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Member, Member]:
         ...
 
@@ -1568,8 +1495,8 @@ class Client:
         event: Literal['user_update'],
         /,
         *,
-        check: Optional[Callable[[User, User], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[User, User], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[User, User]:
         ...
 
@@ -1579,8 +1506,8 @@ class Client:
         event: Literal['member_ban'],
         /,
         *,
-        check: Optional[Callable[[Guild, Union[User, Member]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Guild, Union[User, Member]], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Guild, Union[User, Member]]:
         ...
 
@@ -1590,8 +1517,8 @@ class Client:
         event: Literal['member_unban'],
         /,
         *,
-        check: Optional[Callable[[Guild, User], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Guild, User], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Guild, User]:
         ...
 
@@ -1603,8 +1530,8 @@ class Client:
         event: Literal['message', 'message_delete'],
         /,
         *,
-        check: Optional[Callable[[Message], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Message], bool]],
+        timeout: Optional[float] = None,
     ) -> Message:
         ...
 
@@ -1614,8 +1541,8 @@ class Client:
         event: Literal['message_edit'],
         /,
         *,
-        check: Optional[Callable[[Message, Message], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Message, Message], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Message, Message]:
         ...
 
@@ -1625,8 +1552,8 @@ class Client:
         event: Literal['bulk_message_delete'],
         /,
         *,
-        check: Optional[Callable[[List[Message]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[List[Message]], bool]],
+        timeout: Optional[float] = None,
     ) -> List[Message]:
         ...
 
@@ -1636,8 +1563,8 @@ class Client:
         event: Literal['raw_message_edit'],
         /,
         *,
-        check: Optional[Callable[[RawMessageUpdateEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawMessageUpdateEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawMessageUpdateEvent:
         ...
 
@@ -1647,8 +1574,8 @@ class Client:
         event: Literal['raw_message_delete'],
         /,
         *,
-        check: Optional[Callable[[RawMessageDeleteEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawMessageDeleteEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawMessageDeleteEvent:
         ...
 
@@ -1658,8 +1585,8 @@ class Client:
         event: Literal['raw_bulk_message_delete'],
         /,
         *,
-        check: Optional[Callable[[RawBulkMessageDeleteEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawBulkMessageDeleteEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawBulkMessageDeleteEvent:
         ...
 
@@ -1671,8 +1598,8 @@ class Client:
         event: Literal['reaction_add', 'reaction_remove'],
         /,
         *,
-        check: Optional[Callable[[Reaction, Union[Member, User]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Reaction, Union[Member, User]], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Reaction, Union[Member, User]]:
         ...
 
@@ -1682,8 +1609,8 @@ class Client:
         event: Literal['reaction_clear'],
         /,
         *,
-        check: Optional[Callable[[Message, List[Reaction]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Message, List[Reaction]], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Message, List[Reaction]]:
         ...
 
@@ -1693,8 +1620,8 @@ class Client:
         event: Literal['reaction_clear_emoji'],
         /,
         *,
-        check: Optional[Callable[[Reaction], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Reaction], bool]],
+        timeout: Optional[float] = None,
     ) -> Reaction:
         ...
 
@@ -1704,8 +1631,8 @@ class Client:
         event: Literal['raw_reaction_add', 'raw_reaction_remove'],
         /,
         *,
-        check: Optional[Callable[[RawReactionActionEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawReactionActionEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawReactionActionEvent:
         ...
 
@@ -1715,8 +1642,8 @@ class Client:
         event: Literal['raw_reaction_clear'],
         /,
         *,
-        check: Optional[Callable[[RawReactionClearEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawReactionClearEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawReactionClearEvent:
         ...
 
@@ -1726,8 +1653,8 @@ class Client:
         event: Literal['raw_reaction_clear_emoji'],
         /,
         *,
-        check: Optional[Callable[[RawReactionClearEmojiEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawReactionClearEmojiEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawReactionClearEmojiEvent:
         ...
 
@@ -1739,8 +1666,8 @@ class Client:
         event: Literal['guild_role_create', 'guild_role_delete'],
         /,
         *,
-        check: Optional[Callable[[Role], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Role], bool]],
+        timeout: Optional[float] = None,
     ) -> Role:
         ...
 
@@ -1750,8 +1677,8 @@ class Client:
         event: Literal['guild_role_update'],
         /,
         *,
-        check: Optional[Callable[[Role, Role], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Role, Role], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Role, Role]:
         ...
 
@@ -1763,8 +1690,8 @@ class Client:
         event: Literal['scheduled_event_create', 'scheduled_event_delete'],
         /,
         *,
-        check: Optional[Callable[[ScheduledEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[ScheduledEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> ScheduledEvent:
         ...
 
@@ -1774,8 +1701,8 @@ class Client:
         event: Literal['scheduled_event_user_add', 'scheduled_event_user_remove'],
         /,
         *,
-        check: Optional[Callable[[ScheduledEvent, User], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[ScheduledEvent, User], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[ScheduledEvent, User]:
         ...
 
@@ -1787,8 +1714,8 @@ class Client:
         event: Literal['stage_instance_create', 'stage_instance_delete'],
         /,
         *,
-        check: Optional[Callable[[StageInstance], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[StageInstance], bool]],
+        timeout: Optional[float] = None,
     ) -> StageInstance:
         ...
 
@@ -1798,21 +1725,9 @@ class Client:
         event: Literal['stage_instance_update'],
         /,
         *,
-        check: Optional[Callable[[StageInstance, StageInstance], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[StageInstance, StageInstance], bool]],
+        timeout: Optional[float] = None,
     ) -> Coroutine[Any, Any, Tuple[StageInstance, StageInstance]]:
-        ...
-
-    # Subscriptions
-    @overload
-    async def wait_for(
-        self,
-        event: Literal['subscription_create', 'subscription_update', 'subscription_delete'],
-        /,
-        *,
-        check: Optional[Callable[[Subscription], bool]] = ...,
-        timeout: Optional[float] = ...,
-    ) -> Subscription:
         ...
 
     # Threads
@@ -1822,8 +1737,8 @@ class Client:
         event: Literal['thread_create', 'thread_join', 'thread_remove', 'thread_delete'],
         /,
         *,
-        check: Optional[Callable[[Thread], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Thread], bool]],
+        timeout: Optional[float] = None,
     ) -> Thread:
         ...
 
@@ -1833,8 +1748,8 @@ class Client:
         event: Literal['thread_update'],
         /,
         *,
-        check: Optional[Callable[[Thread, Thread], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Thread, Thread], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Thread, Thread]:
         ...
 
@@ -1844,8 +1759,8 @@ class Client:
         event: Literal['raw_thread_update'],
         /,
         *,
-        check: Optional[Callable[[RawThreadUpdateEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawThreadUpdateEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawThreadUpdateEvent:
         ...
 
@@ -1855,8 +1770,8 @@ class Client:
         event: Literal['raw_thread_delete'],
         /,
         *,
-        check: Optional[Callable[[RawThreadDeleteEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawThreadDeleteEvent], bool]],
+        timeout: Optional[float] = None,
     ) -> RawThreadDeleteEvent:
         ...
 
@@ -1866,8 +1781,8 @@ class Client:
         event: Literal['thread_member_join', 'thread_member_remove'],
         /,
         *,
-        check: Optional[Callable[[ThreadMember], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[ThreadMember], bool]],
+        timeout: Optional[float] = None,
     ) -> ThreadMember:
         ...
 
@@ -1877,8 +1792,8 @@ class Client:
         event: Literal['raw_thread_member_remove'],
         /,
         *,
-        check: Optional[Callable[[RawThreadMembersUpdate], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[RawThreadMembersUpdate], bool]],
+        timeout: Optional[float] = None,
     ) -> RawThreadMembersUpdate:
         ...
 
@@ -1890,33 +1805,9 @@ class Client:
         event: Literal['voice_state_update'],
         /,
         *,
-        check: Optional[Callable[[Member, VoiceState, VoiceState], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Member, VoiceState, VoiceState], bool]],
+        timeout: Optional[float] = None,
     ) -> Tuple[Member, VoiceState, VoiceState]:
-        ...
-
-    # Polls
-
-    @overload
-    async def wait_for(
-        self,
-        event: Literal['poll_vote_add', 'poll_vote_remove'],
-        /,
-        *,
-        check: Optional[Callable[[Union[User, Member], PollAnswer], bool]] = ...,
-        timeout: Optional[float] = ...,
-    ) -> Tuple[Union[User, Member], PollAnswer]:
-        ...
-
-    @overload
-    async def wait_for(
-        self,
-        event: Literal['raw_poll_vote_add', 'raw_poll_vote_remove'],
-        /,
-        *,
-        check: Optional[Callable[[RawPollVoteActionEvent], bool]] = ...,
-        timeout: Optional[float] = ...,
-    ) -> RawPollVoteActionEvent:
         ...
 
     # Commands
@@ -1927,8 +1818,8 @@ class Client:
         event: Literal["command", "command_completion"],
         /,
         *,
-        check: Optional[Callable[[Context[Any]], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Context[Any]], bool]] = None,
+        timeout: Optional[float] = None,
     ) -> Context[Any]:
         ...
 
@@ -1938,8 +1829,8 @@ class Client:
         event: Literal["command_error"],
         /,
         *,
-        check: Optional[Callable[[Context[Any], CommandError], bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[[Context[Any], CommandError], bool]] = None,
+        timeout: Optional[float] = None,
     ) -> Tuple[Context[Any], CommandError]:
         ...
 
@@ -1949,8 +1840,8 @@ class Client:
         event: str,
         /,
         *,
-        check: Optional[Callable[..., bool]] = ...,
-        timeout: Optional[float] = ...,
+        check: Optional[Callable[..., bool]] = None,
+        timeout: Optional[float] = None,
     ) -> Any:
         ...
 
@@ -2364,29 +2255,6 @@ class Client:
         """
         data = await self.http.get_guild(guild_id, with_counts=with_counts)
         return Guild(data=data, state=self._connection)
-
-    async def fetch_guild_preview(self, guild_id: int) -> GuildPreview:
-        """|coro|
-
-        Retrieves a preview of a :class:`.Guild` from an ID. If the guild is discoverable,
-        you don't have to be a member of it.
-
-        .. versionadded:: 2.5
-
-        Raises
-        ------
-        NotFound
-            The guild doesn't exist, or is not discoverable and you are not in it.
-        HTTPException
-            Getting the guild failed.
-
-        Returns
-        --------
-        :class:`.GuildPreview`
-            The guild preview from the ID.
-        """
-        data = await self.http.get_guild_preview(guild_id)
-        return GuildPreview(data=data, state=self._connection)
 
     async def create_guild(
         self,
@@ -2833,7 +2701,6 @@ class Client:
         user: Optional[Snowflake] = None,
         guild: Optional[Snowflake] = None,
         exclude_ended: bool = False,
-        exclude_deleted: bool = True,
     ) -> AsyncIterator[Entitlement]:
         """Retrieves an :term:`asynchronous iterator` of the :class:`.Entitlement` that applications has.
 
@@ -2875,10 +2742,6 @@ class Client:
             The guild to filter by.
         exclude_ended: :class:`bool`
             Whether to exclude ended entitlements. Defaults to ``False``.
-        exclude_deleted: :class:`bool`
-            Whether to exclude deleted entitlements. Defaults to ``True``.
-
-            .. versionadded:: 2.5
 
         Raises
         -------
@@ -2915,7 +2778,6 @@ class Client:
                 user_id=user.id if user else None,
                 guild_id=guild.id if guild else None,
                 exclude_ended=exclude_ended,
-                exclude_deleted=exclude_deleted,
             )
 
             if data:
@@ -2964,7 +2826,7 @@ class Client:
             data, state, limit = await strategy(retrieve, state, limit)
 
             # Terminate loop on next iteration; there's no data left after this
-            if len(data) < 100:
+            if len(data) < 1000:
                 limit = 0
 
             for e in data:
@@ -3025,53 +2887,6 @@ class Client:
         """
         data = await self.http.list_premium_sticker_packs()
         return [StickerPack(state=self._connection, data=pack) for pack in data['sticker_packs']]
-
-    async def fetch_premium_sticker_pack(self, sticker_pack_id: int, /) -> StickerPack:
-        """|coro|
-
-        Retrieves a premium sticker pack with the specified ID.
-
-        .. versionadded:: 2.5
-
-        Parameters
-        ----------
-        sticker_pack_id: :class:`int`
-            The sticker pack's ID to fetch from.
-
-        Raises
-        -------
-        NotFound
-            A sticker pack with this ID does not exist.
-        HTTPException
-            Retrieving the sticker pack failed.
-
-        Returns
-        -------
-        :class:`.StickerPack`
-            The retrieved premium sticker pack.
-        """
-        data = await self.http.get_sticker_pack(sticker_pack_id)
-        return StickerPack(state=self._connection, data=data)
-
-    async def fetch_soundboard_default_sounds(self) -> List[SoundboardDefaultSound]:
-        """|coro|
-
-        Retrieves all default soundboard sounds.
-
-        .. versionadded:: 2.5
-
-        Raises
-        -------
-        HTTPException
-            Retrieving the default soundboard sounds failed.
-
-        Returns
-        ---------
-        List[:class:`.SoundboardDefaultSound`]
-            All default soundboard sounds.
-        """
-        data = await self.http.get_soundboard_default_sounds()
-        return [SoundboardDefaultSound(state=self._connection, data=sound) for sound in data]
 
     async def create_dm(self, user: Snowflake) -> DMChannel:
         """|coro|
@@ -3149,7 +2964,7 @@ class Client:
 
         self._connection.remove_dynamic_items(*items)
 
-    def add_view(self, view: BaseView, *, message_id: Optional[int] = None) -> None:
+    def add_view(self, view: View, *, message_id: Optional[int] = None) -> None:
         """Registers a :class:`~discord.ui.View` for persistent listening.
 
         This method should be used for when a view is comprised of components
@@ -3159,11 +2974,8 @@ class Client:
 
         Parameters
         ------------
-        view: Union[:class:`discord.ui.View`, :class:`discord.ui.LayoutView`]
+        view: :class:`discord.ui.View`
             The view to register for dispatching.
-
-            .. versionchanged:: 2.6
-                This now accepts :class:`discord.ui.LayoutView` instances.
         message_id: Optional[:class:`int`]
             The message ID that the view is attached to. This is currently used to
             refresh the view's state during message update events. If not given
@@ -3178,7 +2990,7 @@ class Client:
             and all their components have an explicitly provided custom_id.
         """
 
-        if not isinstance(view, BaseView):
+        if not isinstance(view, View):
             raise TypeError(f'expected an instance of View not {view.__class__.__name__}')
 
         if not view.is_persistent():
@@ -3190,103 +3002,9 @@ class Client:
         self._connection.store_view(view, message_id)
 
     @property
-    def persistent_views(self) -> Sequence[BaseView]:
-        """Sequence[Union[:class:`.View`, :class:`.LayoutView`]]: A sequence of persistent views added to the client.
+    def persistent_views(self) -> Sequence[View]:
+        """Sequence[:class:`.View`]: A sequence of persistent views added to the client.
 
         .. versionadded:: 2.0
         """
         return self._connection.persistent_views
-
-    async def create_application_emoji(
-        self,
-        *,
-        name: str,
-        image: bytes,
-    ) -> Emoji:
-        """|coro|
-
-        Create an emoji for the current application.
-
-        .. versionadded:: 2.5
-
-        Parameters
-        ----------
-        name: :class:`str`
-            The emoji name. Must be between 2 and 32 characters long.
-        image: :class:`bytes`
-            The :term:`py:bytes-like object` representing the image data to use.
-            Only JPG, PNG and GIF images are supported.
-
-        Raises
-        ------
-        MissingApplicationID
-            The application ID could not be found.
-        HTTPException
-            Creating the emoji failed.
-
-        Returns
-        -------
-        :class:`.Emoji`
-            The emoji that was created.
-        """
-        if self.application_id is None:
-            raise MissingApplicationID
-
-        img = utils._bytes_to_base64_data(image)
-        data = await self.http.create_application_emoji(self.application_id, name, img)
-        return Emoji(guild=Object(0), state=self._connection, data=data)
-
-    async def fetch_application_emoji(self, emoji_id: int, /) -> Emoji:
-        """|coro|
-
-        Retrieves an emoji for the current application.
-
-        .. versionadded:: 2.5
-
-        Parameters
-        ----------
-        emoji_id: :class:`int`
-            The emoji ID to retrieve.
-
-        Raises
-        ------
-        MissingApplicationID
-            The application ID could not be found.
-        HTTPException
-            Retrieving the emoji failed.
-
-        Returns
-        -------
-        :class:`.Emoji`
-            The emoji requested.
-        """
-        if self.application_id is None:
-            raise MissingApplicationID
-
-        data = await self.http.get_application_emoji(self.application_id, emoji_id)
-        return Emoji(guild=Object(0), state=self._connection, data=data)
-
-    async def fetch_application_emojis(self) -> List[Emoji]:
-        """|coro|
-
-        Retrieves all emojis for the current application.
-
-        .. versionadded:: 2.5
-
-        Raises
-        -------
-        MissingApplicationID
-            The application ID could not be found.
-        HTTPException
-            Retrieving the emojis failed.
-
-        Returns
-        -------
-        List[:class:`.Emoji`]
-            The list of emojis for the current application.
-        """
-        if self.application_id is None:
-            raise MissingApplicationID
-
-        data = await self.http.get_application_emojis(self.application_id)
-        return [Emoji(guild=Object(0), state=self._connection, data=emoji) for emoji in data['items']]

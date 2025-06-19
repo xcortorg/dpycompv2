@@ -46,8 +46,7 @@ class Entitlement(TypedDict):
     deleted: bool
     starts_at: NotRequired[str]
     ends_at: NotRequired[str]
-    guild_id: NotRequired[str]
-    consumed: NotRequired[bool]
+    guild_id: Optional[str]
 
 
 EntitlementOwnerType = Literal[1, 2]

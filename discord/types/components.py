@@ -24,31 +24,24 @@ DEALINGS IN THE SOFTWARE.
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional, TypedDict, Union
+from typing import List, Literal, TypedDict, Union
 from typing_extensions import NotRequired
 
 from .emoji import PartialEmoji
 from .channel import ChannelType
 
-ComponentType = Literal[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 17]
-ButtonStyle = Literal[1, 2, 3, 4, 5, 6]
+ComponentType = Literal[1, 2, 3, 4]
+ButtonStyle = Literal[1, 2, 3, 4, 5]
 TextStyle = Literal[1, 2]
 DefaultValueType = Literal['user', 'role', 'channel']
-SeparatorSize = Literal[1, 2]
-MediaItemLoadingState = Literal[0, 1, 2, 3]
 
 
-class ComponentBase(TypedDict):
-    id: NotRequired[int]
-    type: int
-
-
-class ActionRow(ComponentBase):
+class ActionRow(TypedDict):
     type: Literal[1]
     components: List[ActionRowChildComponent]
 
 
-class ButtonComponent(ComponentBase):
+class ButtonComponent(TypedDict):
     type: Literal[2]
     style: ButtonStyle
     custom_id: NotRequired[str]
@@ -56,7 +49,6 @@ class ButtonComponent(ComponentBase):
     disabled: NotRequired[bool]
     emoji: NotRequired[PartialEmoji]
     label: NotRequired[str]
-    sku_id: NotRequired[str]
 
 
 class SelectOption(TypedDict):
@@ -67,7 +59,7 @@ class SelectOption(TypedDict):
     emoji: NotRequired[PartialEmoji]
 
 
-class SelectComponent(ComponentBase):
+class SelectComponent(TypedDict):
     custom_id: str
     placeholder: NotRequired[str]
     min_values: NotRequired[int]
@@ -106,7 +98,7 @@ class ChannelSelectComponent(SelectComponent):
     default_values: NotRequired[List[SelectDefaultValues]]
 
 
-class TextInput(ComponentBase):
+class TextInput(TypedDict):
     type: Literal[4]
     custom_id: str
     style: TextStyle
@@ -125,75 +117,5 @@ class SelectMenu(SelectComponent):
     default_values: NotRequired[List[SelectDefaultValues]]
 
 
-class SectionComponent(ComponentBase):
-    type: Literal[9]
-    components: List[Union[TextComponent, ButtonComponent]]
-    accessory: Component
-
-
-class TextComponent(ComponentBase):
-    type: Literal[10]
-    content: str
-
-
-class UnfurledMediaItem(TypedDict):
-    url: str
-    proxy_url: str
-    height: NotRequired[Optional[int]]
-    width: NotRequired[Optional[int]]
-    content_type: NotRequired[str]
-    placeholder: str
-    loading_state: MediaItemLoadingState
-    flags: NotRequired[int]
-
-
-class ThumbnailComponent(ComponentBase):
-    type: Literal[11]
-    media: UnfurledMediaItem
-    description: NotRequired[Optional[str]]
-    spoiler: NotRequired[bool]
-
-
-class MediaGalleryItem(TypedDict):
-    media: UnfurledMediaItem
-    description: NotRequired[Optional[str]]
-    spoiler: NotRequired[bool]
-
-
-class MediaGalleryComponent(ComponentBase):
-    type: Literal[12]
-    items: List[MediaGalleryItem]
-
-
-class FileComponent(ComponentBase):
-    type: Literal[13]
-    file: UnfurledMediaItem
-    spoiler: NotRequired[bool]
-
-
-class SeparatorComponent(ComponentBase):
-    type: Literal[14]
-    divider: NotRequired[bool]
-    spacing: NotRequired[SeparatorSize]
-
-
-class ContainerComponent(ComponentBase):
-    type: Literal[17]
-    accent_color: NotRequired[int]
-    spoiler: NotRequired[bool]
-    components: List[ContainerChildComponent]
-
-
 ActionRowChildComponent = Union[ButtonComponent, SelectMenu, TextInput]
-ContainerChildComponent = Union[
-    ActionRow,
-    TextComponent,
-    MediaGalleryComponent,
-    FileComponent,
-    SectionComponent,
-    SectionComponent,
-    ContainerComponent,
-    SeparatorComponent,
-    ThumbnailComponent,
-]
-Component = Union[ActionRowChildComponent, ContainerChildComponent]
+Component = Union[ActionRow, ActionRowChildComponent]
