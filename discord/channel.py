@@ -2852,7 +2852,6 @@ class ForumChannel(discord.abc.GuildChannel, Hashable):
         files: Sequence[File] = ...,
         allowed_mentions: AllowedMentions = ...,
         mention_author: bool = ...,
-        applied_tags: Sequence[ForumTag] = ...,
         view: LayoutView,
         suppress_embeds: bool = ...,
         reason: Optional[str] = ...,
@@ -3027,7 +3026,7 @@ class ForumChannel(discord.abc.GuildChannel, Hashable):
             data = await state.http.start_thread_in_forum(self.id, params=params, reason=reason)
             thread = Thread(guild=self.guild, state=self._state, data=data)
             message = Message(state=self._state, channel=thread, data=data['message'])
-            if view and not view.is_finished() and view.is_dispatchable():
+            if view and not view.is_finished():
                 self._state.store_view(view, message.id)
 
             return ThreadWithMessage(thread=thread, message=message)

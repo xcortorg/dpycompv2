@@ -36,12 +36,15 @@ from typing import (
     List,
     Literal,
     Optional,
+    Tuple,
+    Type,
     TypeVar,
     Union,
 )
 
 from .item import Item, ItemCallbackType
 from .view import _component_to_item, LayoutView
+from .dynamic import DynamicItem
 from ..enums import ComponentType
 from ..utils import MISSING, get as _utils_get
 from ..colour import Colour, Color
@@ -146,6 +149,7 @@ class Container(Item[V]):
         id: Optional[int] = None,
     ) -> None:
         super().__init__()
+        self.__dispatchable: List[Item[V]] = []
         self._children: List[Item[V]] = self._init_children()
 
         if children is not MISSING:
@@ -161,6 +165,15 @@ class Container(Item[V]):
     def __repr__(self) -> str:
         return f'<{super().__repr__()[:-1]} children={len(self._children)}>'
 
+    def _add_dispatchable(self, item: Item[Any]) -> None:
+        self.__dispatchable.append(item)
+
+    def _remove_dispatchable(self, item: Item[Any]) -> None:
+        try:
+            self.__dispatchable.remove(item)
+        except ValueError:
+            pass
+
     def _init_children(self) -> List[Item[Any]]:
         children = []
         parents = {}
@@ -175,6 +188,7 @@ class Container(Item[V]):
                 if getattr(item, '__discord_ui_section__', False) and item.accessory.is_dispatchable():  # type: ignore
                     if item.accessory._provided_custom_id is False:  # type: ignore
                         item.accessory.custom_id = os.urandom(16).hex()  # type: ignore
+                    self.__dispatchable.append(item.accessory)  # type: ignore
 
                 setattr(self, name, item)
                 children.append(item)
@@ -195,8 +209,15 @@ class Container(Item[V]):
                 parents.get(parent, parent)._children.append(item)
                 # we donnot append it to the children list because technically these buttons and
                 # selects are not from the container but the action row itself.
+                self.__dispatchable.append(item)
 
         return children
+
+    def is_dispatchable(self) -> bool:
+        return bool(self.__dispatchable)
+
+    def is_persistent(self) -> bool:
+        return all(c.is_persistent() for c in self.children)
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
@@ -283,15 +304,29 @@ class Container(Item[V]):
             base['id'] = self.id
         return base
 
+    def _update_store_data(
+        self,
+        dispatch_info: Dict[Tuple[int, str], Item[Any]],
+        dynamic_items: Dict[Any, Type[DynamicItem]],
+    ) -> bool:
+        is_fully_dynamic = True
+        for item in self.__dispatchable:
+            if isinstance(item, DynamicItem):
+                pattern = item.__discord_ui_compiled_template__
+                dynamic_items[pattern] = item.__class__
+            elif item.is_dispatchable():
+                dispatch_info[(item.type.value, item.custom_id)] = item
+                is_fully_dynamic = False
+        return is_fully_dynamic
+
     @classmethod
     def from_component(cls, component: ContainerComponent) -> Self:
-        self = cls(
+        return cls(
+            *[_component_to_item(c) for c in component.children],
             accent_colour=component.accent_colour,
             spoiler=component.spoiler,
             id=component.id,
         )
-        self._children = [_component_to_item(cmp, self) for cmp in component.children]
-        return self
 
     def walk_children(self) -> Generator[Item[V], None, None]:
         """An iterator that recursively walks through all the children of this container
@@ -330,6 +365,15 @@ class Container(Item[V]):
             raise TypeError(f'expected Item not {item.__class__.__name__}')
 
         self._children.append(item)
+
+        if item.is_dispatchable():
+            if getattr(item, '__discord_ui_section__', False):
+                self.__dispatchable.append(item.accessory)  # type: ignore
+            elif getattr(item, '__discord_ui_action_row__', False):
+                self.__dispatchable.extend([i for i in item._children if i.is_dispatchable()])  # type: ignore
+            else:
+                self.__dispatchable.append(item)
+
         is_layout_view = self._view and getattr(self._view, '__discord_ui_layout_view__', False)
 
         if getattr(item, '__discord_ui_update_view__', False):
@@ -361,6 +405,17 @@ class Container(Item[V]):
         except ValueError:
             pass
         else:
+            if item.is_dispatchable():
+                if getattr(item, '__discord_ui_section__', False):
+                    self._remove_dispatchable(item.accessory)  # type: ignore
+                elif getattr(item, '__discord_ui_action_row__', False):
+                    for c in item._children:  # type: ignore
+                        if not c.is_dispatchable():
+                            continue
+                        self._remove_dispatchable(c)
+                else:
+                    self._remove_dispatchable(item)
+
             if self._view and getattr(self._view, '__discord_ui_layout_view__', False):
                 if getattr(item, '__discord_ui_update_view__', False):
                     self._view._total_children -= len(tuple(item.walk_children()))  # type: ignore
@@ -398,4 +453,5 @@ class Container(Item[V]):
         if self._view and getattr(self._view, '__discord_ui_layout_view__', False):
             self._view._total_children -= sum(1 for _ in self.walk_children())
         self._children.clear()
+        self.__dispatchable.clear()
         return self

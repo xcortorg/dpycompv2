@@ -47,7 +47,7 @@ from .enums import (
 )
 from .flags import AttachmentFlags
 from .colour import Colour
-from .utils import get_slots, MISSING, _get_as_snowflake
+from .utils import get_slots, MISSING
 from .partial_emoji import PartialEmoji, _EmojiTag
 
 if TYPE_CHECKING:
@@ -926,9 +926,6 @@ class UnfurledMediaItem(AssetMixin):
         The media item's placeholder.
     loading_state: Optional[:class:`MediaItemLoadingState`]
         The loading state of this media item.
-    attachment_id: Optional[:class:`int`]
-        The attachment id this media item points to, only available if the url points to a local file
-        uploaded within the component message.
     """
 
     __slots__ = (
@@ -940,7 +937,6 @@ class UnfurledMediaItem(AssetMixin):
         '_flags',
         'placeholder',
         'loading_state',
-        'attachment_id',
         '_state',
     )
 
@@ -954,7 +950,6 @@ class UnfurledMediaItem(AssetMixin):
         self._flags: int = 0
         self.placeholder: Optional[str] = None
         self.loading_state: Optional[MediaItemLoadingState] = None
-        self.attachment_id: Optional[int] = None
         self._state: Optional[ConnectionState] = None
 
     @property
@@ -979,7 +974,6 @@ class UnfurledMediaItem(AssetMixin):
         loading_state = data.get('loading_state')
         if loading_state is not None:
             self.loading_state = try_enum(MediaItemLoadingState, loading_state)
-        self.attachment_id = _get_as_snowflake(data, 'attachment_id')
         self._state = state
 
     def __repr__(self) -> str:
@@ -1051,15 +1045,11 @@ class MediaGalleryItem:
         return [cls._from_data(item, state) for item in items]
 
     def to_dict(self) -> MediaGalleryItemPayload:
-        payload: MediaGalleryItemPayload = {
+        return {
             'media': self.media.to_dict(),  # type: ignore
+            'description': self.description,
             'spoiler': self.spoiler,
         }
-
-        if self.description:
-            payload['description'] = self.description
-
-        return payload
 
 
 class MediaGalleryComponent(Component):
@@ -1124,18 +1114,12 @@ class FileComponent(Component):
         Whether this file is flagged as a spoiler.
     id: Optional[:class:`int`]
         The ID of this component.
-    name: Optional[:class:`str`]
-        The displayed file name, only available when received from the API.
-    size: Optional[:class:`int`]
-        The file size in MiB, only available when received from the API.
     """
 
     __slots__ = (
         'media',
         'spoiler',
         'id',
-        'name',
-        'size',
     )
 
     __repr_info__ = __slots__
@@ -1144,8 +1128,6 @@ class FileComponent(Component):
         self.media: UnfurledMediaItem = UnfurledMediaItem._from_data(data['file'], state)
         self.spoiler: bool = data.get('spoiler', False)
         self.id: Optional[int] = data.get('id')
-        self.name: Optional[str] = data.get('name')
-        self.size: Optional[int] = data.get('size')
 
     @property
     def type(self) -> Literal[ComponentType.file]:
@@ -1275,15 +1257,11 @@ class Container(Component):
 
     accent_color = accent_colour
 
-    @property
-    def type(self) -> Literal[ComponentType.container]:
-        return ComponentType.container
-
     def to_dict(self) -> ContainerComponentPayload:
         payload: ContainerComponentPayload = {
-            'type': self.type.value,
+            'type': self.type.value,  # type: ignore
             'spoiler': self.spoiler,
-            'components': [c.to_dict() for c in self.children],  # pyright: ignore[reportAssignmentType]
+            'components': [c.to_dict() for c in self.children],
         }
         if self.id is not None:
             payload['id'] = self.id
