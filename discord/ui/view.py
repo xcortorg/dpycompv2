@@ -68,8 +68,9 @@ from ..components import (
     SeparatorComponent,
     ThumbnailComponent,
     SelectOption,
+    Container as ContainerComponent,
 )
-from ..utils import get as _utils_get, _get_as_snowflake
+from ..utils import get as _utils_get, _get_as_snowflake, find as _utils_find
 from ..enums import SeparatorSpacing, TextStyle, try_enum, ButtonStyle
 from ..emoji import PartialEmoji
 
@@ -106,52 +107,59 @@ def _walk_all_components(components: List[Component]) -> Iterator[Component]:
             yield item
 
 
-def _component_to_item(component: Component) -> Item:
+def _component_to_item(component: Component, parent: Optional[Item] = None) -> Item:
     if isinstance(component, ActionRowComponent):
         from .action_row import ActionRow
 
-        return ActionRow.from_component(component)
-    if isinstance(component, ButtonComponent):
+        item = ActionRow.from_component(component)
+    elif isinstance(component, ButtonComponent):
         from .button import Button
 
-        return Button.from_component(component)
-    if isinstance(component, SelectComponent):
+        item = Button.from_component(component)
+    elif isinstance(component, SelectComponent):
         from .select import BaseSelect
 
-        return BaseSelect.from_component(component)
-    if isinstance(component, SectionComponent):
+        item = BaseSelect.from_component(component)
+    elif isinstance(component, SectionComponent):
         from .section import Section
 
-        return Section.from_component(component)
-    if isinstance(component, TextDisplayComponent):
+        item = Section.from_component(component)
+    elif isinstance(component, TextDisplayComponent):
         from .text_display import TextDisplay
 
-        return TextDisplay.from_component(component)
-    if isinstance(component, MediaGalleryComponent):
+        item = TextDisplay.from_component(component)
+    elif isinstance(component, MediaGalleryComponent):
         from .media_gallery import MediaGallery
 
-        return MediaGallery.from_component(component)
-    if isinstance(component, FileComponent):
+        item = MediaGallery.from_component(component)
+    elif isinstance(component, FileComponent):
         from .file import File
 
-        return File.from_component(component)
-    if isinstance(component, SeparatorComponent):
+        item = File.from_component(component)
+    elif isinstance(component, SeparatorComponent):
         from .separator import Separator
 
-        return Separator.from_component(component)
-    if isinstance(component, ThumbnailComponent):
+        item = Separator.from_component(component)
+    elif isinstance(component, ThumbnailComponent):
         from .thumbnail import Thumbnail
 
-        return Thumbnail.from_component(component)
+        item = Thumbnail.from_component(component)
+    elif isinstance(component, ContainerComponent):
+        from .container import Container
 
-    return Item.from_component(component)
+        item = Container.from_component(component)
+    else:
+        item = Item.from_component(component)
+
+    item._parent = parent
+    return item
 
 
-def _component_data_to_item(data: ComponentPayload) -> Item:
+def _component_data_to_item(data: ComponentPayload, parent: Optional[Item] = None) -> Item:
     if data['type'] == 1:
         from .action_row import ActionRow
 
-        return ActionRow(
+        item = ActionRow(
             *(_component_data_to_item(c) for c in data['components']),
             id=data.get('id'),
         )
@@ -160,7 +168,7 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
 
         emoji = data.get('emoji')
 
-        return Button(
+        item = Button(
             style=try_enum(ButtonStyle, data['style']),
             custom_id=data.get('custom_id'),
             url=data.get('url'),
@@ -172,7 +180,7 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
     elif data['type'] == 3:
         from .select import Select
 
-        return Select(
+        item = Select(
             custom_id=data['custom_id'],
             placeholder=data.get('placeholder'),
             min_values=data.get('min_values', 1),
@@ -184,7 +192,7 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
     elif data['type'] == 4:
         from .text_input import TextInput
 
-        return TextInput(
+        item = TextInput(
             label=data['label'],
             style=try_enum(TextStyle, data['style']),
             custom_id=data['custom_id'],
@@ -210,7 +218,7 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
             8: ChannelSelect,
         }
 
-        return cls_map[data['type']](
+        item = cls_map[data['type']](
             custom_id=data['custom_id'],  # type: ignore # will always be present in this point
             placeholder=data.get('placeholder'),
             min_values=data.get('min_values', 1),
@@ -222,7 +230,7 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
     elif data['type'] == 9:
         from .section import Section
 
-        return Section(
+        item = Section(
             *(_component_data_to_item(c) for c in data['components']),
             accessory=_component_data_to_item(data['accessory']),
             id=data.get('id'),
@@ -230,11 +238,11 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
     elif data['type'] == 10:
         from .text_display import TextDisplay
 
-        return TextDisplay(data['content'], id=data.get('id'))
+        item = TextDisplay(data['content'], id=data.get('id'))
     elif data['type'] == 11:
         from .thumbnail import Thumbnail
 
-        return Thumbnail(
+        item = Thumbnail(
             UnfurledMediaItem._from_data(data['media'], None),
             description=data.get('description'),
             spoiler=data.get('spoiler', False),
@@ -243,14 +251,14 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
     elif data['type'] == 12:
         from .media_gallery import MediaGallery
 
-        return MediaGallery(
+        item = MediaGallery(
             *(MediaGalleryItem._from_data(m, None) for m in data['items']),
             id=data.get('id'),
         )
     elif data['type'] == 13:
         from .file import File
 
-        return File(
+        item = File(
             UnfurledMediaItem._from_data(data['file'], None),
             spoiler=data.get('spoiler', False),
             id=data.get('id'),
@@ -258,7 +266,7 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
     elif data['type'] == 14:
         from .separator import Separator
 
-        return Separator(
+        item = Separator(
             visible=data.get('divider', True),
             spacing=try_enum(SeparatorSpacing, data.get('spacing', 1)),
             id=data.get('id'),
@@ -266,7 +274,7 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
     elif data['type'] == 17:
         from .container import Container
 
-        return Container(
+        item = Container(
             *(_component_data_to_item(c) for c in data['components']),
             accent_colour=data.get('accent_color'),
             spoiler=data.get('spoiler', False),
@@ -274,6 +282,9 @@ def _component_data_to_item(data: ComponentPayload) -> Item:
         )
     else:
         raise ValueError(f'invalid item with type {data["type"]} provided')
+
+    item._parent = parent
+    return item
 
 
 class _ViewWeights:
@@ -401,9 +412,10 @@ class BaseView:
             await asyncio.sleep(self.__timeout_expiry - now)
 
     def is_dispatchable(self) -> bool:
-        # this is used by webhooks to check whether a view requires a state attached
-        # or not, this simply is, whether a view has a component other than a url button
-        return any(item.is_dispatchable() for item in self.children)
+        # checks whether any interactable items (buttons or selects) are present
+        # in this view, and check whether this requires a state attached in case
+        # of webhooks and if the view should be stored in the view store
+        return any(item.is_dispatchable() for item in self.walk_children())
 
     def has_components_v2(self) -> bool:
         return any(c._is_v2() for c in self.children)
@@ -533,7 +545,7 @@ class BaseView:
 
         if self._is_v2() and self._total_children + added > 40:
             raise ValueError('maximum number of children exceeded')
-
+        self._total_children += added
         self._children.append(item)
         return self
 
@@ -595,7 +607,7 @@ class BaseView:
         Optional[:class:`Item`]
             The item found, or ``None``.
         """
-        return _utils_get(self._children, id=id)
+        return _utils_get(self.walk_children(), id=id)
 
     async def interaction_check(self, interaction: Interaction, /) -> bool:
         """|coro|
@@ -695,7 +707,7 @@ class BaseView:
     def _refresh(self, components: List[Component]) -> None:
         # fmt: off
         old_state: Dict[str, Item[Any]] = {
-            item.custom_id: item
+            item.custom_id: item  # type: ignore
             for item in self._children
             if item.is_dispatchable()
         }
@@ -795,7 +807,7 @@ class BaseView:
 
         You can find out about this format in the :ddocs:`official Discord documentation <components/reference#anatomy-of-a-component>`.
 
-        This method shuold be called on the respective class (or subclass), so if you
+        This method should be called on the respective class (or subclass), so if you
         want to convert v2 items, you should call :meth:`LayoutView.from_dict`, or the same
         method from any subclass of it; and not :meth:`View.from_message`, or the same
         method from any subclass of it.
@@ -1046,39 +1058,13 @@ class ViewStore:
 
         dispatch_info = self._views.setdefault(message_id, {})
         is_fully_dynamic = True
-        for item in view._children:
+        for item in view.walk_children():
             if isinstance(item, DynamicItem):
                 pattern = item.__discord_ui_compiled_template__
                 self._dynamic_items[pattern] = item.__class__
             elif item.is_dispatchable():
-                if getattr(item, '__discord_ui_container__', False):
-                    is_fully_dynamic = (
-                        item._update_store_data(  # type: ignore
-                            dispatch_info,
-                            self._dynamic_items,
-                        )
-                        or is_fully_dynamic
-                    )
-                elif getattr(item, '__discord_ui_action_row__', False):
-                    is_fully_dynamic = (
-                        item._update_store_data(  # type: ignore
-                            dispatch_info,
-                            self._dynamic_items,
-                        )
-                        or is_fully_dynamic
-                    )
-                elif getattr(item, '__discord_ui_section__', False):
-                    accessory: Item = item.accessory  # type: ignore
-                    accessory._view = view
-
-                    if isinstance(accessory, DynamicItem):
-                        pattern = accessory.__discord_ui_compiled_template__
-                        self._dynamic_items[pattern] = accessory.__class__
-                    else:
-                        dispatch_info[(accessory.type.value, accessory.custom_id)] = accessory
-                else:
-                    dispatch_info[(item.type.value, item.custom_id)] = item
-                    is_fully_dynamic = False
+                dispatch_info[(item.type.value, item.custom_id)] = item  # type: ignore
+                is_fully_dynamic = False
 
         view._cache_key = message_id
         if message_id is not None and not is_fully_dynamic:
@@ -1096,7 +1082,7 @@ class ViewStore:
                     pattern = item.__discord_ui_compiled_template__
                     self._dynamic_items.pop(pattern, None)
                 elif item.is_dispatchable():
-                    dispatch_info.pop((item.type.value, item.custom_id), None)
+                    dispatch_info.pop((item.type.value, item.custom_id), None)  # type: ignore
 
             if len(dispatch_info) == 0:
                 self._views.pop(view._cache_key, None)
@@ -1117,13 +1103,13 @@ class ViewStore:
         view_cls = View if not interaction.message.flags.components_v2 else LayoutView
         view = view_cls.from_message(interaction.message, timeout=None)
 
-        try:
-            base_item_index, base_item = next(
-                (index, child)
-                for index, child in enumerate(view._children)
-                if child.type.value == component_type and getattr(child, 'custom_id', None) == custom_id
-            )
-        except StopIteration:
+        base_item = _utils_find(
+            lambda i: i.type.value == component_type and getattr(i, 'custom_id', None) == custom_id,
+            view.walk_children(),
+        )
+
+        # if the item is not found then return
+        if not base_item:
             return
 
         try:
@@ -1132,8 +1118,25 @@ class ViewStore:
             _log.exception('Ignoring exception in dynamic item creation for %r', factory)
             return
 
-        # Swap the item in the view with our new dynamic item
-        view._children[base_item_index] = item  # type: ignore
+        # Swap the item in the view or parent with our new dynamic item
+        # Prioritize the item parent:
+        parent = base_item._parent or view
+
+        try:
+            child_index = parent._children.index(base_item)  # type: ignore
+        except ValueError:
+            # handle cases in which the item is a section accessory
+            if getattr(base_item._parent, '__discord_ui_section__', False):
+                if (
+                    base_item._parent.accessory.type.value == component_type  # type: ignore
+                    and getattr(base_item._parent.accessory, 'custom_id', None) == custom_id  # type: ignore
+                ):
+                    base_item._parent.accessory = item  # type: ignore
+            else:
+                return
+        else:
+            parent._children[child_index] = item  # type: ignore
+
         item._view = view
         item._rendered_row = base_item._rendered_row
         item._refresh_state(interaction, interaction.data)  # type: ignore

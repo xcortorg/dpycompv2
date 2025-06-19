@@ -44,7 +44,6 @@ from typing import (
 
 from .item import Item, ItemCallbackType
 from .button import Button, button as _button
-from .dynamic import DynamicItem
 from .select import select as _select, Select, UserSelect, RoleSelect, ChannelSelect, MentionableSelect
 from ..components import ActionRow as ActionRowComponent
 from ..enums import ButtonStyle, ComponentType, ChannelType
@@ -195,24 +194,6 @@ class ActionRow(Item[V]):
             children.append(item)
         return children
 
-    def _update_store_data(self, dispatch_info: Dict, dynamic_items: Dict) -> bool:
-        is_fully_dynamic = True
-
-        for item in self._children:
-            if isinstance(item, DynamicItem):
-                pattern = item.__discord_ui_compiled_template__
-                dynamic_items[pattern] = item.__class__
-            elif item.is_dispatchable():
-                dispatch_info[(item.type.value, item.custom_id)] = item
-                is_fully_dynamic = False
-        return is_fully_dynamic
-
-    def is_dispatchable(self) -> bool:
-        return any(c.is_dispatchable() for c in self.children)
-
-    def is_persistent(self) -> bool:
-        return all(c.is_persistent() for c in self.children)
-
     def _update_children_view(self, view: LayoutView) -> None:
         for child in self._children:
             child._view = view  # pyright: ignore[reportAttributeAccessIssue]
@@ -282,9 +263,6 @@ class ActionRow(Item[V]):
 
         if self._view and getattr(self._view, '__discord_ui_layout_view__', False):
             self._view._total_children += 1
-
-        if item.is_dispatchable() and self._parent and getattr(self._parent, '__discord_ui_container__', False):
-            self._parent._add_dispatchable(item)  # type: ignore
 
         return self
 
@@ -599,7 +577,7 @@ class ActionRow(Item[V]):
     def from_component(cls, component: ActionRowComponent) -> ActionRow:
         from .view import _component_to_item
 
-        self = cls()
+        self = cls(id=component.id)
         for cmp in component.children:
-            self.add_item(_component_to_item(cmp))
+            self.add_item(_component_to_item(cmp, self))
         return self
