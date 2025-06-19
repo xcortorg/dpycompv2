@@ -38,12 +38,14 @@ if TYPE_CHECKING:
     from ..interactions import Interaction
     from ..components import Component
     from ..enums import ComponentType
-    from .view import View, LayoutView
+    from .view import View
+
+    V = TypeVar('V', bound='View', covariant=True, default=View)
 else:
-    View = LayoutView = Any
+    V = TypeVar('V', bound='View', covariant=True)
 
 
-class DynamicItem(Generic[BaseT], Item[Union[View, LayoutView]]):
+class DynamicItem(Generic[BaseT], Item['View']):
     """Represents an item with a dynamic ``custom_id`` that can be used to store state within
     that ``custom_id``.
 
@@ -55,10 +57,9 @@ class DynamicItem(Generic[BaseT], Item[Union[View, LayoutView]]):
     and should not be used long term. Their only purpose is to act as a "template"
     for the actual dispatched item.
 
-    When this item is generated, :attr:`view` is set to a regular :class:`View` instance,
-    but to a :class:`LayoutView` if the component was sent with one, this is obtained from
-    the original message given from the interaction. This means that custom view subclasses
-    cannot be accessed from this item.
+    When this item is generated, :attr:`view` is set to a regular :class:`View` instance
+    from the original message given from the interaction. This means that custom view
+    subclasses cannot be accessed from this item.
 
     .. versionadded:: 2.4
 
@@ -109,9 +110,6 @@ class DynamicItem(Generic[BaseT], Item[Union[View, LayoutView]]):
         if not self.item.is_dispatchable():
             raise TypeError('item must be dispatchable, e.g. not a URL button')
 
-        if not self.item._can_be_dynamic():
-            raise TypeError(f'{self.item.__class__.__name__} cannot be set as a dynamic item')
-
         if not self.template.match(self.custom_id):
             raise ValueError(f'item custom_id {self.custom_id!r} must match the template {self.template.pattern!r}')
 
@@ -146,7 +144,7 @@ class DynamicItem(Generic[BaseT], Item[Union[View, LayoutView]]):
     @property
     def custom_id(self) -> str:
         """:class:`str`: The ID of the dynamic item that gets received during an interaction."""
-        return self.item.custom_id
+        return self.item.custom_id  # type: ignore  # This attribute exists for dispatchable items
 
     @custom_id.setter
     def custom_id(self, value: str) -> None:
@@ -156,7 +154,7 @@ class DynamicItem(Generic[BaseT], Item[Union[View, LayoutView]]):
         if not self.template.match(value):
             raise ValueError(f'custom_id must match the template {self.template.pattern!r}')
 
-        self.item.custom_id = value
+        self.item.custom_id = value  # type: ignore  # This attribute exists for dispatchable items
         self._provided_custom_id = True
 
     @property
@@ -210,9 +208,3 @@ class DynamicItem(Generic[BaseT], Item[Union[View, LayoutView]]):
             from the ``match`` object.
         """
         raise NotImplementedError
-
-    async def callback(self, interaction: Interaction[ClientT]) -> Any:
-        return await self.item.callback(interaction)
-
-    async def interaction_check(self, interaction: Interaction[ClientT], /) -> bool:
-        return await self.item.interaction_check(interaction)
