@@ -73,6 +73,7 @@ if TYPE_CHECKING:
     from typing_extensions import TypeAlias, TypeGuard
 
     from .view import BaseView
+    from .action_row import ActionRow
     from ..types.components import SelectMenu as SelectMenuPayload
     from ..types.interactions import SelectMessageComponentInteractionData
     from ..app_commands import AppCommandChannel, AppCommandThread
@@ -263,6 +264,7 @@ class BaseSelect(Item[V]):
 
         self.row = row
         self.id = id
+        self._parent: Optional[ActionRow] = None
         self._values: List[PossibleValue] = []
 
     @property
