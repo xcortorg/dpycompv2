@@ -66,11 +66,6 @@ class Section(Item[V]):
         The ID of this component. This must be unique across the view.
     """
 
-    __item_repr_attributes__ = (
-        'accessory',
-        'row',
-        'id',
-    )
     __discord_ui_section__: ClassVar[bool] = True
     __discord_ui_update_view__: ClassVar[bool] = True
 
@@ -98,9 +93,6 @@ class Section(Item[V]):
         self.row = row
         self.id = id
 
-    def __repr__(self) -> str:
-        return f'<{super().__repr__()[:-1]} children={len(self._children)}'
-
     @property
     def type(self) -> Literal[ComponentType.section]:
         return ComponentType.section
@@ -125,7 +117,7 @@ class Section(Item[V]):
         return self.accessory.is_dispatchable()
 
     def is_persistent(self) -> bool:
-        return self.accessory.is_persistent()
+        return self.is_dispatchable() and self.accessory.is_persistent()
 
     def walk_children(self) -> Generator[Item[V], None, None]:
         """An iterator that recursively walks through all the children of this section.
@@ -176,7 +168,7 @@ class Section(Item[V]):
         self._children.append(item)
 
         if self._view and getattr(self._view, '__discord_ui_layout_view__', False):
-            self._view._total_children += 1
+            self._view.__total_children += 1
 
         return self
 
@@ -198,11 +190,11 @@ class Section(Item[V]):
             pass
         else:
             if self._view and getattr(self._view, '__discord_ui_layout_view__', False):
-                self._view._total_children -= 1
+                self._view.__total_children -= 1
 
         return self
 
-    def get_item(self, id: int, /) -> Optional[Item[V]]:
+    def get_item_by_id(self, id: int, /) -> Optional[Item[V]]:
         """Gets an item with :attr:`Item.id` set as ``id``, or ``None`` if
         not found.
 
@@ -229,7 +221,7 @@ class Section(Item[V]):
         chaining.
         """
         if self._view and getattr(self._view, '__discord_ui_layout_view__', False):
-            self._view._total_children -= len(self._children)  # we don't count the accessory because it is required
+            self._view.__total_children -= len(self._children) + 1  # the + 1 is the accessory
 
         self._children.clear()
         return self
@@ -244,24 +236,16 @@ class Section(Item[V]):
             id=component.id,
         )
 
-    def to_components(self) -> List[Dict[str, Any]]:
-        components = []
-
-        def key(item: Item) -> int:
-            if item._rendered_row is not None:
-                return item._rendered_row
-            if item._row is not None:
-                return item._row
-            return sys.maxsize
-
-        for component in sorted(self._children, key=key):
-            components.append(component.to_component_dict())
-        return components
-
     def to_component_dict(self) -> Dict[str, Any]:
         data = {
             'type': self.type.value,
-            'components': self.to_components(),
+            'components': [
+                c.to_component_dict()
+                for c in sorted(
+                    self._children,
+                    key=lambda i: i._rendered_row or sys.maxsize,
+                )
+            ],
             'accessory': self.accessory.to_component_dict(),
         }
         if self.id is not None:

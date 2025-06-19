@@ -87,10 +87,10 @@ class _ActionRowCallback:
 
 
 class ActionRow(Item[V]):
-    r"""Represents a UI action row.
+    """Represents a UI action row.
 
     This is a top-level layout component that can only be used on :class:`LayoutView`
-    and can contain :class:`Button`\s and :class:`Select`\s in it.
+    and can contain :class:`Button` 's and :class:`Select` 's in it.
 
     This can be inherited.
 
@@ -143,10 +143,6 @@ class ActionRow(Item[V]):
     __action_row_children_items__: ClassVar[List[ItemCallbackType[Any]]] = []
     __discord_ui_action_row__: ClassVar[bool] = True
     __discord_ui_update_view__: ClassVar[bool] = True
-    __item_repr_attributes__ = (
-        'row',
-        'id',
-    )
 
     def __init__(
         self,
@@ -180,9 +176,6 @@ class ActionRow(Item[V]):
 
         cls.__action_row_children_items__ = list(children.values())
 
-    def __repr__(self) -> str:
-        return f'{super().__repr__()[:-1]} children={len(self._children)}>'
-
     def _init_children(self) -> List[Item[Any]]:
         children = []
 
@@ -211,7 +204,7 @@ class ActionRow(Item[V]):
         return any(c.is_dispatchable() for c in self.children)
 
     def is_persistent(self) -> bool:
-        return all(c.is_persistent() for c in self.children)
+        return self.is_dispatchable() and all(c.is_persistent() for c in self.children)
 
     def _update_children_view(self, view: LayoutView) -> None:
         for child in self._children:
@@ -281,10 +274,7 @@ class ActionRow(Item[V]):
         self._children.append(item)
 
         if self._view and getattr(self._view, '__discord_ui_layout_view__', False):
-            self._view._total_children += 1
-
-        if item.is_dispatchable() and self._parent and getattr(self._parent, '__discord_ui_container__', False):
-            self._parent._add_dispatchable(item)  # type: ignore
+            self._view.__total_children += 1
 
         return self
 
@@ -306,11 +296,11 @@ class ActionRow(Item[V]):
             pass
         else:
             if self._view and getattr(self._view, '__discord_ui_layout_view__', False):
-                self._view._total_children -= 1
+                self._view.__total_children -= 1
 
         return self
 
-    def get_item(self, id: int, /) -> Optional[Item[V]]:
+    def get_item_by_id(self, id: int, /) -> Optional[Item[V]]:
         """Gets an item with :attr:`Item.id` set as ``id``, or ``None`` if
         not found.
 
@@ -328,7 +318,7 @@ class ActionRow(Item[V]):
         Optional[:class:`Item`]
             The item found, or ``None``.
         """
-        return _utils_get(self.walk_children(), id=id)
+        return _utils_get(self._children, id=id)
 
     def clear_items(self) -> Self:
         """Removes all items from the row.
@@ -337,22 +327,16 @@ class ActionRow(Item[V]):
         chaining.
         """
         if self._view and getattr(self._view, '__discord_ui_layout_view__', False):
-            self._view._total_children -= len(self._children)
+            self._view.__total_children -= len(self._children)
         self._children.clear()
         return self
 
     def to_component_dict(self) -> Dict[str, Any]:
         components = []
 
-        def key(item: Item) -> int:
-            if item._rendered_row is not None:
-                return item._rendered_row
-            if item._row is not None:
-                return item._row
-            return sys.maxsize
-
-        for component in sorted(self.children, key=key):
-            components.append(component.to_component_dict())
+        key = lambda i: i._rendered_row or i._row or sys.maxsize
+        for child in sorted(self._children, key=key):
+            components.append(child.to_component_dict())
 
         base = {
             'type': self.type.value,

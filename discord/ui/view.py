@@ -49,15 +49,11 @@ import sys
 import time
 import os
 import copy
-
 from .item import Item, ItemCallbackType
 from .dynamic import DynamicItem
 from ..components import (
     Component,
     ActionRow as ActionRowComponent,
-    MediaGalleryItem,
-    SelectDefaultValue,
-    UnfurledMediaItem,
     _component_factory,
     Button as ButtonComponent,
     SelectMenu as SelectComponent,
@@ -67,11 +63,8 @@ from ..components import (
     FileComponent,
     SeparatorComponent,
     ThumbnailComponent,
-    SelectOption,
 )
-from ..utils import get as _utils_get, _get_as_snowflake
-from ..enums import SeparatorSpacing, TextStyle, try_enum, ButtonStyle
-from ..emoji import PartialEmoji
+from ..utils import get as _utils_get
 
 # fmt: off
 __all__ = (
@@ -87,7 +80,7 @@ if TYPE_CHECKING:
 
     from ..interactions import Interaction
     from ..message import Message
-    from ..types.components import ComponentBase as ComponentBasePayload, Component as ComponentPayload
+    from ..types.components import ComponentBase as ComponentBasePayload
     from ..types.interactions import ModalSubmitComponentInteractionData as ModalSubmitComponentInteractionDataPayload
     from ..state import ConnectionState
     from .modal import Modal
@@ -107,10 +100,6 @@ def _walk_all_components(components: List[Component]) -> Iterator[Component]:
 
 
 def _component_to_item(component: Component) -> Item:
-    if isinstance(component, ActionRowComponent):
-        from .action_row import ActionRow
-
-        return ActionRow.from_component(component)
     if isinstance(component, ButtonComponent):
         from .button import Button
 
@@ -145,135 +134,6 @@ def _component_to_item(component: Component) -> Item:
         return Thumbnail.from_component(component)
 
     return Item.from_component(component)
-
-
-def _component_data_to_item(data: ComponentPayload) -> Item:
-    if data['type'] == 1:
-        from .action_row import ActionRow
-
-        return ActionRow(
-            *(_component_data_to_item(c) for c in data['components']),
-            id=data.get('id'),
-        )
-    elif data['type'] == 2:
-        from .button import Button
-
-        emoji = data.get('emoji')
-
-        return Button(
-            style=try_enum(ButtonStyle, data['style']),
-            custom_id=data.get('custom_id'),
-            url=data.get('url'),
-            disabled=data.get('disabled', False),
-            emoji=PartialEmoji.from_dict(emoji) if emoji else None,
-            label=data.get('label'),
-            sku_id=_get_as_snowflake(data, 'sku_id'),
-        )
-    elif data['type'] == 3:
-        from .select import Select
-
-        return Select(
-            custom_id=data['custom_id'],
-            placeholder=data.get('placeholder'),
-            min_values=data.get('min_values', 1),
-            max_values=data.get('max_values', 1),
-            disabled=data.get('disabled', False),
-            id=data.get('id'),
-            options=[SelectOption.from_dict(o) for o in data.get('options', [])],
-        )
-    elif data['type'] == 4:
-        from .text_input import TextInput
-
-        return TextInput(
-            label=data['label'],
-            style=try_enum(TextStyle, data['style']),
-            custom_id=data['custom_id'],
-            placeholder=data.get('placeholder'),
-            default=data.get('value'),
-            required=data.get('required', True),
-            min_length=data.get('min_length'),
-            max_length=data.get('max_length'),
-            id=data.get('id'),
-        )
-    elif data['type'] in (5, 6, 7, 8):
-        from .select import (
-            UserSelect,
-            RoleSelect,
-            MentionableSelect,
-            ChannelSelect,
-        )
-
-        cls_map: Dict[int, Type[Union[UserSelect, RoleSelect, MentionableSelect, ChannelSelect]]] = {
-            5: UserSelect,
-            6: RoleSelect,
-            7: MentionableSelect,
-            8: ChannelSelect,
-        }
-
-        return cls_map[data['type']](
-            custom_id=data['custom_id'],  # type: ignore # will always be present in this point
-            placeholder=data.get('placeholder'),
-            min_values=data.get('min_values', 1),
-            max_values=data.get('max_values', 1),
-            disabled=data.get('disabled', False),
-            default_values=[SelectDefaultValue.from_dict(v) for v in data.get('default_values', [])],
-            id=data.get('id'),
-        )
-    elif data['type'] == 9:
-        from .section import Section
-
-        return Section(
-            *(_component_data_to_item(c) for c in data['components']),
-            accessory=_component_data_to_item(data['accessory']),
-            id=data.get('id'),
-        )
-    elif data['type'] == 10:
-        from .text_display import TextDisplay
-
-        return TextDisplay(data['content'], id=data.get('id'))
-    elif data['type'] == 11:
-        from .thumbnail import Thumbnail
-
-        return Thumbnail(
-            UnfurledMediaItem._from_data(data['media'], None),
-            description=data.get('description'),
-            spoiler=data.get('spoiler', False),
-            id=data.get('id'),
-        )
-    elif data['type'] == 12:
-        from .media_gallery import MediaGallery
-
-        return MediaGallery(
-            *(MediaGalleryItem._from_data(m, None) for m in data['items']),
-            id=data.get('id'),
-        )
-    elif data['type'] == 13:
-        from .file import File
-
-        return File(
-            UnfurledMediaItem._from_data(data['file'], None),
-            spoiler=data.get('spoiler', False),
-            id=data.get('id'),
-        )
-    elif data['type'] == 14:
-        from .separator import Separator
-
-        return Separator(
-            visible=data.get('divider', True),
-            spacing=try_enum(SeparatorSpacing, data.get('spacing', 1)),
-            id=data.get('id'),
-        )
-    elif data['type'] == 17:
-        from .container import Container
-
-        return Container(
-            *(_component_data_to_item(c) for c in data['components']),
-            accent_colour=data.get('accent_color'),
-            spoiler=data.get('spoiler', False),
-            id=data.get('type'),
-        )
-    else:
-        raise ValueError(f'invalid item with type {data["type"]} provided')
 
 
 class _ViewWeights:
@@ -319,6 +179,9 @@ class _ViewWeights:
     def clear(self) -> None:
         self.weights = [0, 0, 0, 0, 0]
 
+    def v2_weights(self) -> bool:
+        return len(self.weights) > 5
+
 
 class _ViewCallback:
     __slots__ = ('view', 'callback', 'item')
@@ -335,6 +198,7 @@ class _ViewCallback:
 class BaseView:
     __discord_ui_view__: ClassVar[bool] = False
     __discord_ui_modal__: ClassVar[bool] = False
+    __discord_ui_container__: ClassVar[bool] = False
     __view_children_items__: ClassVar[Dict[str, ItemLike]] = {}
 
     def __init__(self, *, timeout: Optional[float] = 180.0) -> None:
@@ -346,7 +210,7 @@ class BaseView:
         self.__timeout_expiry: Optional[float] = None
         self.__timeout_task: Optional[asyncio.Task[None]] = None
         self.__stopped: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-        self._total_children: int = sum(1 for _ in self.walk_children())
+        self.__total_children: int = len(tuple(self.walk_children()))
 
     def _is_v2(self) -> bool:
         return False
@@ -446,16 +310,7 @@ class BaseView:
         The :attr:`.Message.components` of a message are read-only
         and separate types from those in the ``discord.ui`` namespace.
         In order to modify and edit message components they must be
-        converted into a :class:`View` or :class:`LayoutView` first.
-
-        If the message has any v2 component, then you must use
-        :class:`LayoutView` in order for them to be converted into
-        their respective items.
-
-        This method should be called on the respective class (or subclass), so
-        if you want to convert v2 items, you should call :meth:`LayoutView.from_message`,
-        or the same method from any subclass of it; and not :meth:`View.from_message`, or the
-        same method from any subclass of it.
+        converted into a :class:`View` first.
 
         Parameters
         -----------
@@ -463,40 +318,8 @@ class BaseView:
             The message with components to convert into a view.
         timeout: Optional[:class:`float`]
             The timeout of the converted view.
-
-        Returns
-        -------
-        Union[:class:`View`, :class:`LayoutView`]
-            The converted view. This will always return one of :class:`View` or
-            :class:`LayoutView`, and not one of its subclasses.
         """
-        cls = cls._to_minimal_cls()
-        view = cls(timeout=timeout)
-        row = 0
-
-        for component in message.components:
-            if not view._is_v2() and isinstance(component, ActionRowComponent):
-                for child in component.children:
-                    item = _component_to_item(child)
-                    item.row = row
-                    # this error should never be raised, because ActionRows can only
-                    # contain items that View accepts, but check anyways
-                    if item._is_v2():
-                        raise RuntimeError(f'{item.__class__.__name__} cannot be added to {view.__class__.__name__}')
-                    view.add_item(item)
-                    row += 1
-                continue
-
-            item = _component_to_item(component)
-            item.row = row
-
-            if item._is_v2() and not view._is_v2():
-                raise RuntimeError(f'{item.__class__.__name__} cannot be added to {view.__class__.__name__}')
-
-            view.add_item(item)
-            row += 1
-
-        return view
+        pass
 
     def add_item(self, item: Item[Any]) -> Self:
         """Adds an item to the view.
@@ -531,7 +354,7 @@ class BaseView:
             item._update_children_view(self)  # type: ignore
             added += len(tuple(item.walk_children()))  # type: ignore
 
-        if self._is_v2() and self._total_children + added > 40:
+        if self._is_v2() and self.__total_children + added > 40:
             raise ValueError('maximum number of children exceeded')
 
         self._children.append(item)
@@ -558,10 +381,10 @@ class BaseView:
             if getattr(item, '__discord_ui_update_view__', False):
                 removed += len(tuple(item.walk_children()))  # type: ignore
 
-            if self._total_children - removed < 0:
-                self._total_children = 0
+            if self.__total_children - removed < 0:
+                self.__total_children = 0
             else:
-                self._total_children -= removed
+                self.__total_children -= removed
 
         return self
 
@@ -572,10 +395,10 @@ class BaseView:
         chaining.
         """
         self._children.clear()
-        self._total_children = 0
+        self.__total_children = 0
         return self
 
-    def get_item(self, id: int, /) -> Optional[Item[Self]]:
+    def get_item_by_id(self, id: int, /) -> Optional[Item[Self]]:
         """Gets an item with :attr:`Item.id` set as ``id``, or ``None`` if
         not found.
 
@@ -780,51 +603,6 @@ class BaseView:
                 # if it has this attribute then it can contain children
                 yield from child.walk_children()  # type: ignore
 
-    @classmethod
-    def _to_minimal_cls(cls) -> Type[Union[View, LayoutView]]:
-        if issubclass(cls, View):
-            return View
-        elif issubclass(cls, LayoutView):
-            return LayoutView
-        raise RuntimeError
-
-    @classmethod
-    def from_dict(cls, data: List[ComponentPayload], *, timeout: Optional[float] = 180.0) -> Any:
-        r"""Converts a :class:`list` of :class:`dict`\s to a :class:`View` or :class:`LayoutView`,
-        provided as in the format that Discord expects it to be in.
-
-        You can find out about this format in the :ddocs:`official Discord documentation <components/reference#anatomy-of-a-component>`.
-
-        This method shuold be called on the respective class (or subclass), so if you
-        want to convert v2 items, you should call :meth:`LayoutView.from_dict`, or the same
-        method from any subclass of it; and not :meth:`View.from_message`, or the same
-        method from any subclass of it.
-
-        Parameters
-        ----------
-        data: List[:class:`dict`]
-            The array of dictionaries to convert into a LayoutView
-        timeout: Optional[:class:`float`]
-            The timeout of the converted view.
-
-        Returns
-        -------
-        Union[:class:`View`, :class:`LayoutView`]
-            The converted view. This will always return one of :class:`View` or
-            :class:`LayoutView`, and not one of its subclasses.
-        """
-        cls = cls._to_minimal_cls()
-        self = cls(timeout=timeout)
-
-        for raw in data:
-            item = _component_data_to_item(raw)
-
-            if item._is_v2() and not self._is_v2():
-                continue
-
-            self.add_item(item)
-        return self
-
 
 class View(BaseView):
     """Represents a UI view.
@@ -841,16 +619,6 @@ class View(BaseView):
     """
 
     __discord_ui_view__: ClassVar[bool] = True
-
-    if TYPE_CHECKING:
-
-        @classmethod
-        def from_dict(cls, data: List[ComponentPayload], *, timeout: Optional[float] = 180.0) -> View:
-            ...
-
-        @classmethod
-        def from_message(cls, message: Message, /, *, timeout: Optional[float] = 180.0) -> View:
-            ...
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
@@ -895,6 +663,53 @@ class View(BaseView):
             )
 
         return components
+
+    @classmethod
+    def from_message(cls, message: Message, /, *, timeout: Optional[float] = 180.0) -> View:
+        """Converts a message's components into a :class:`View`.
+
+        The :attr:`.Message.components` of a message are read-only
+        and separate types from those in the ``discord.ui`` namespace.
+        In order to modify and edit message components they must be
+        converted into a :class:`View` first.
+
+        .. warning::
+
+            This **will not** take into account every v2 component, if you
+            want to edit them, use :meth:`LayoutView.from_message` instead.
+
+        Parameters
+        -----------
+        message: :class:`discord.Message`
+            The message with components to convert into a view.
+        timeout: Optional[:class:`float`]
+            The timeout of the converted view.
+
+        Returns
+        --------
+        :class:`View`
+            The converted view. This always returns a :class:`View` and not
+            one of its subclasses.
+        """
+        view = View(timeout=timeout)
+        row = 0
+        for component in message.components:
+            if isinstance(component, ActionRowComponent):
+                for child in component.children:
+                    item = _component_to_item(child)
+                    item.row = row
+                    if item._is_v2():
+                        raise RuntimeError('v2 components cannot be added to this View')
+                    view.add_item(item)
+                row += 1
+            else:
+                item = _component_to_item(component)
+                item.row = row
+                if item._is_v2():
+                    raise RuntimeError('v2 components cannot be added to this View')
+                view.add_item(item)
+
+        return view
 
     def add_item(self, item: Item[Any]) -> Self:
         if len(self._children) >= 25:
@@ -943,21 +758,12 @@ class LayoutView(BaseView):
 
     __discord_ui_layout_view__: ClassVar[bool] = True
 
-    if TYPE_CHECKING:
-
-        @classmethod
-        def from_dict(cls, data: List[ComponentPayload], *, timeout: Optional[float] = 180.0) -> LayoutView:
-            ...
-
-        @classmethod
-        def from_message(cls, message: Message, /, *, timeout: Optional[float] = 180.0) -> LayoutView:
-            ...
-
     def __init__(self, *, timeout: Optional[float] = 180.0) -> None:
         super().__init__(timeout=timeout)
+        self.__total_children: int = len(list(self.walk_children()))
 
-        if self._total_children > 40:
-            raise ValueError('maximum number of children exceeded (40)')
+        if self.__total_children > 40:
+            raise ValueError('maximum number of children exceeded')
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
@@ -965,11 +771,14 @@ class LayoutView(BaseView):
         children: Dict[str, ItemLike] = {}
         callback_children: Dict[str, ItemCallbackType[Any]] = {}
 
+        row = 0
+
         for base in reversed(cls.__mro__):
             for name, member in base.__dict__.items():
                 if isinstance(member, Item):
-                    member._rendered_row = member._row
+                    member._rendered_row = member._row or row
                     children[name] = member
+                    row += 1
                 elif hasattr(member, '__discord_ui_model_type__') and getattr(member, '__discord_ui_parent__', None):
                     callback_children[name] = member
 
@@ -984,24 +793,51 @@ class LayoutView(BaseView):
 
         # sorted by row, which in LayoutView indicates the position of the component in the
         # payload instead of in which ActionRow it should be placed on.
-
-        def key(item: Item) -> int:
-            if item._rendered_row is not None:
-                return item._rendered_row
-            if item._row is not None:
-                return item._row
-            return sys.maxsize
-
-        for i in sorted(self._children, key=key):
-            components.append(i.to_component_dict())
+        key = lambda i: i._rendered_row or i._row or sys.maxsize
+        for child in sorted(self._children, key=key):
+            components.append(
+                child.to_component_dict(),
+            )
 
         return components
 
     def add_item(self, item: Item[Any]) -> Self:
-        if self._total_children >= 40:
+        if self.__total_children >= 40:
             raise ValueError('maximum number of children exceeded (40)')
         super().add_item(item)
         return self
+
+    @classmethod
+    def from_message(cls, message: Message, /, *, timeout: Optional[float] = 180.0) -> LayoutView:
+        """Converts a message's components into a :class:`LayoutView`.
+
+        The :attr:`.Message.components` of a message are read-only
+        and separate types from those in the ``discord.ui`` namespace.
+        In order to modify and edit message components they must be
+        converted into a :class:`LayoutView` first.
+
+        Unlike :meth:`View.from_message` this converts v2 components.
+
+        Parameters
+        -----------
+        message: :class:`discord.Message`
+            The message with components to convert into a view.
+        timeout: Optional[:class:`float`]
+            The timeout of the converted view.
+
+        Returns
+        --------
+        :class:`LayoutView`
+            The converted view. This always returns a :class:`LayoutView` and not
+            one of its subclasses.
+        """
+        view = LayoutView(timeout=timeout)
+        for component in message.components:
+            item = _component_to_item(component)
+            item.row = 0
+            view.add_item(item)
+
+        return view
 
 
 class ViewStore:
@@ -1114,8 +950,7 @@ class ViewStore:
         if interaction.message is None:
             return
 
-        view_cls = View if not interaction.message.flags.components_v2 else LayoutView
-        view = view_cls.from_message(interaction.message, timeout=None)
+        view = View.from_message(interaction.message, timeout=None)
 
         try:
             base_item_index, base_item = next(
